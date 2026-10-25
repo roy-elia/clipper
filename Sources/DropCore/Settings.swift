@@ -1,6 +1,6 @@
 import Foundation
 
-public struct Settings: Codable, Equatable, Sendable {
+public struct AppSettings: Codable, Equatable, Sendable {
     public var hotkey: Hotkey = .default
     public var historyCapacity: Int = 1000
     public var playSounds: Bool = false
@@ -11,11 +11,11 @@ public struct Settings: Codable, Equatable, Sendable {
     public static let capacityRange = 50...10_000
 
     public mutating func setCapacity(_ n: Int) {
-        historyCapacity = min(max(n, Settings.capacityRange.lowerBound), Settings.capacityRange.upperBound)
+        historyCapacity = min(max(n, AppSettings.capacityRange.lowerBound), AppSettings.capacityRange.upperBound)
     }
 
-    public static func load(_ url: URL) -> Settings {
-        (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(Settings.self, from: $0) } ?? Settings()
+    public static func load(_ url: URL) -> AppSettings {
+        (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(AppSettings.self, from: $0) } ?? AppSettings()
     }
 
     public func save(_ url: URL) {

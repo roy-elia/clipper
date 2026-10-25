@@ -39,13 +39,13 @@ import Foundation
     }
 
     @Test func settingsClampAndRoundTrip() {
-        var s = Settings(); s.setCapacity(5); #expect(s.historyCapacity == 50)
+        var s = AppSettings(); s.setCapacity(5); #expect(s.historyCapacity == 50)
         s.setCapacity(99_999); #expect(s.historyCapacity == 10_000)
         s.playSounds = true
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("clipper-set-\(UUID()).json")
         defer { try? FileManager.default.removeItem(at: url) }
         s.save(url)
-        #expect(Settings.load(url) == s)
-        #expect(Settings.load(URL(fileURLWithPath: "/nonexistent/x.json")) == Settings())
+        #expect(AppSettings.load(url) == s)
+        #expect(AppSettings.load(URL(fileURLWithPath: "/nonexistent/x.json")) == AppSettings())
     }
 }
