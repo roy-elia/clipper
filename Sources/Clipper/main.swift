@@ -93,7 +93,10 @@ final class App: NSObject, NSApplicationDelegate {
         monitor.write(item)
         panel?.orderOut(nil)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            if !PasteInjector.pasteNow() { PasteInjector.requestAccess() }
+            let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "none"
+            let ok = PasteInjector.pasteNow()
+            NSLog("Clipper paste: trusted=%d posted=%d frontmost=%@", PasteInjector.trusted ? 1 : 0, ok ? 1 : 0, front)
+            if !ok { PasteInjector.requestAccess() }
         }
     }
 
