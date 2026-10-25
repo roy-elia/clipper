@@ -36,4 +36,13 @@ import Foundation
         let st = HistoryStore(url: url); st.add(item("keep me"))
         #expect(HistoryStore(url: url).all.map(\.title) == ["keep me"])
     }
+
+    @Test func historyFileIsOwnerOnly() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("clipper-perm-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("h.json")
+        HistoryStore(url: url).add(item("secret-ish"))
+        let mode = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+        #expect(mode == 0o600)
+    }
 }

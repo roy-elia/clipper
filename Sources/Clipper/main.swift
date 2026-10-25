@@ -113,16 +113,16 @@ final class App: NSObject, NSApplicationDelegate {
 
     @objc func toggle() {
         if panel == nil {
-            let p = ShelfPanel(contentRect: NSRect(x: 0, y: 0, width: 760, height: 190),
-                            styleMask: [.nonactivatingPanel, .fullSizeContentView, .titled], backing: .buffered, defer: false)
-            p.titleVisibility = .hidden; p.titlebarAppearsTransparent = true; p.isFloatingPanel = true
-            p.isMovableByWindowBackground = true; p.backgroundColor = .clear
+            let p = ShelfPanel(contentRect: NSRect(x: 0, y: 0, width: 760, height: 252),
+                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            p.isFloatingPanel = true; p.hasShadow = false
+            p.isMovableByWindowBackground = true; p.backgroundColor = .clear; p.isOpaque = false
             let host = NSHostingView(rootView: ShelfView(model: model))
             p.contentView = host
             panel = p
         }
         if let s = NSScreen.main, let p = panel {
-            p.setFrameOrigin(NSPoint(x: s.frame.midX - 380, y: s.frame.minY + 60))
+            p.setFrameOrigin(NSPoint(x: s.visibleFrame.midX - 380, y: s.visibleFrame.minY + 24))
         }
         if panel?.isVisible == true { panel?.orderOut(nil); return }
         model.refresh(); panel?.makeKeyAndOrderFront(nil)

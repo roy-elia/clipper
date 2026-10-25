@@ -84,6 +84,7 @@ struct ShelfView: View {
             }
         }
         .padding(14).frame(width: 760, height: 252)
+        .background { ShelfBackdrop() }
         .onChange(of: model.query) { model.refresh() }
         .onChange(of: model.kind) { model.refresh() }
         .onChange(of: model.board) { model.refresh() }
@@ -153,5 +154,17 @@ extension Color {
         let a = h.count == 8 ? Double(v & 0xFF) / 255 : 1
         let rgb = h.count == 8 ? v >> 8 : v
         self.init(.sRGB, red: Double((rgb >> 16) & 0xFF) / 255, green: Double((rgb >> 8) & 0xFF) / 255, blue: Double(rgb & 0xFF) / 255, opacity: a)
+    }
+}
+
+/// The shelf floats over other apps, so it needs its own backdrop: system Liquid Glass, with a material before macOS 26.
+struct ShelfBackdrop: View {
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
+        if #available(macOS 26, *) {
+            Color.clear.glassEffect(.regular, in: shape)
+        } else {
+            shape.fill(.regularMaterial)
+        }
     }
 }

@@ -115,6 +115,9 @@ public final class HistoryStore: @unchecked Sendable {
         guard let url, let d = try? JSONEncoder.iso.encode(Envelope(items: items, boards: boards)) else { return }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? d.write(to: url, options: .atomic)
+        // Clipboard history can hold secrets: owner-only file and folder.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.deletingLastPathComponent().path)
     }
 }
 
