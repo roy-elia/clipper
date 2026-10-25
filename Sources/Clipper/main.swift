@@ -92,7 +92,7 @@ final class App: NSObject, NSApplicationDelegate {
     func pick(_ item: ClipItem) {
         monitor.write(item)
         panel?.orderOut(nil)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "none"
             let ok = PasteInjector.pasteNow()
             NSLog("Clipper paste: trusted=%d posted=%d frontmost=%@", PasteInjector.trusted ? 1 : 0, ok ? 1 : 0, front)
@@ -118,7 +118,7 @@ final class App: NSObject, NSApplicationDelegate {
         if panel == nil {
             let p = ShelfPanel(contentRect: NSRect(x: 0, y: 0, width: 760, height: 252),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-            p.isFloatingPanel = true; p.hasShadow = false
+            p.isFloatingPanel = true; p.hasShadow = false; p.becomesKeyOnlyIfNeeded = true
             p.isMovableByWindowBackground = true; p.backgroundColor = .clear; p.isOpaque = false
             let host = NSHostingView(rootView: ShelfView(model: model))
             p.contentView = host
@@ -128,13 +128,26 @@ final class App: NSObject, NSApplicationDelegate {
             p.setFrameOrigin(NSPoint(x: s.visibleFrame.midX - 380, y: s.visibleFrame.minY + 24))
         }
         if panel?.isVisible == true { panel?.orderOut(nil); return }
-        model.refresh(); panel?.makeKeyAndOrderFront(nil)
+        if let shelf = panel as? ShelfPanel {
+            let front = NSWorkspace.shared.frontmostApplication
+            shelf.previousApp = front?.bundleIdentifier == Bundle.main.bundleIdentifier ? nil : front
+        }
+        // Don't take key status from the app being pasted into; the panel becomes key only if a text field is clicked.
+        model.refresh(); panel?.orderFrontRegardless()
     }
 }
 
 /// Non-activating so the app you are pasting into stays frontmost, yet still able to take typing for search.
 final class ShelfPanel: NSPanel {
+    /// The app that was frontmost when the panel opened. Making this panel key takes key status from that app's
+    /// window, so closing the panel must hand it back or the next keystroke (including our ⌘V) goes nowhere.
+    var previousApp: NSRunningApplication?
     override var canBecomeKey: Bool { true }
+    override func orderOut(_ sender: Any?) {
+        super.orderOut(sender)
+        previousApp?.activate()
+        previousApp = nil
+    }
     override func cancelOperation(_ sender: Any?) { orderOut(nil) }
 }
 
