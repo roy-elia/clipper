@@ -14,11 +14,23 @@ public struct ClipItem: Codable, Sendable, Equatable, Identifiable {
     public var checksum: String
     public var createdAt: Date
     public var pinboard: String?
+    /// Extra pasteboard representations (rtf, html) kept so a paste keeps its formatting.
+    public var extras: [String: Data]?
+    /// Set for file clips: the file URLs, so the paste hands back real files rather than their paths as text.
+    public var fileURLs: [String]?
 
     public init(id: UUID = UUID(), kind: ClipKind, title: String, text: String? = nil, data: Data? = nil,
-                sourceBundleID: String? = nil, checksum: String, createdAt: Date = Date(), pinboard: String? = nil) {
+                sourceBundleID: String? = nil, checksum: String, createdAt: Date = Date(), pinboard: String? = nil,
+                extras: [String: Data]? = nil, fileURLs: [String]? = nil) {
         self.id = id; self.kind = kind; self.title = title; self.text = text; self.data = data
         self.sourceBundleID = sourceBundleID; self.checksum = checksum; self.createdAt = createdAt
-        self.pinboard = pinboard
+        self.pinboard = pinboard; self.extras = extras; self.fileURLs = fileURLs
     }
+}
+
+public extension ClipItem {
+    /// What a plain-text paste inserts: no formatting, files become their paths.
+    var plainText: String? { text }
+    var isRich: Bool { !(extras?.isEmpty ?? true) }
+    var fileNames: [String] { (fileURLs ?? []).map { URL(string: $0)?.lastPathComponent ?? $0 } }
 }

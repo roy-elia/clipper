@@ -1,0 +1,22 @@
+import Foundation
+
+/// clipper://show, clipper://search?q=text, clipper://stack, clipper://new
+public enum URLAction: Equatable {
+    case show, stack, new, settings
+    case search(String)
+
+    public static func parse(_ url: URL) -> URLAction? {
+        guard url.scheme == "clipper" else { return nil }
+        switch url.host {
+        case "show": return .show
+        case "stack": return .stack
+        case "new": return .new
+        case "settings": return .settings
+        case "search":
+            let q = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value ?? ""
+            return .search(q)
+        default: return nil
+        }
+    }
+}
+

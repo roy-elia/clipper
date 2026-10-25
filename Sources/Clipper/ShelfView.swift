@@ -6,13 +6,18 @@ final class ShelfModel: ObservableObject {
     @Published var query = ""
     @Published var kind: ClipKind?
     @Published var board: String?          // nil = History
+    @Published var app: String?            // source-app filter
+    @Published var apps: [String] = []
+    @Published var selection = 0
+    @Published var focusTick = 0           // bumped each time the shelf opens so search regains focus
     @Published var items: [ClipItem] = []
     @Published var boards: [String] = []
     @Published var stack = PasteStack()
     @Published var previewing: ClipItem?
     @Published var settings: AppSettings
     let store: HistoryStore
-    var onPick: ((ClipItem) -> Void)?
+    var onPick: ((ClipItem, Bool) -> Void)?   // item, plain text only
+    var onClose: (() -> Void)?
     var onPreview: ((ClipItem) -> Void)?
     var onSettingsChanged: (() -> Void)?
 
@@ -20,7 +25,17 @@ final class ShelfModel: ObservableObject {
         self.store = store; self.settings = settings; refresh()
     }
 
-    func refresh() { items = store.search(query, kind: kind, pinboard: board); boards = store.pinboards() }
+    func refresh() {
+        items = store.search(query, kind: kind, pinboard: board, app: app)
+        boards = store.pinboards(); apps = store.apps()
+        selection = items.isEmpty ? 0 : min(selection, items.count - 1)
+    }
+
+    func move(_ delta: Int) { guard !items.isEmpty else { return }; selection = min(max(selection + delta, 0), items.count - 1) }
+    var selected: ClipItem? { items.indices.contains(selection) ? items[selection] : nil }
+    func pickSelected(plain: Bool) { if let i = selected { onPick?(i, plain) } }
+    func pick(number n: Int) { if items.indices.contains(n - 1) { onPick?(items[n - 1], false) } }
+    func deleteSelected() { if let i = selected { delete(i) } }
 
     func pin(_ item: ClipItem, to name: String?) { store.setPinboard(name, for: item.id); refresh() }
     func delete(_ item: ClipItem) { store.delete(item.id); stack.remove(item.id); refresh() }
@@ -34,6 +49,7 @@ struct ShelfView: View {
     @ObservedObject var model: ShelfModel
     @State private var newBoard = ""
     @State private var adding = false
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         VStack(spacing: 10) {
@@ -63,35 +79,78 @@ struct ShelfView: View {
                 TextField("Search clips", text: $model.query)
                     .textFieldStyle(.plain).padding(.horizontal, 12).padding(.vertical, 7)
                     .background(.quaternary, in: Capsule())
+                    .focused($searchFocused)
+                    .onSubmit { model.pickSelected(plain: false) }
                     .accessibilityIdentifier("shelf.search")
                 chip("All", nil)
                 ForEach(ClipKind.allCases, id: \.self) { chip($0.rawValue.capitalized, $0) }
+                appMenu
             }
             if model.items.isEmpty {
                 Text(model.board == nil ? "Nothing copied yet" : "Right-click a clip, then Pin to, to add it here")
                     .foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 10) {
-                        ForEach(model.items) { item in
-                            Card(item: item)
-                                .onTapGesture { model.onPick?(item) }
-                                .contextMenu { menu(for: item) }
-                                .accessibilityIdentifier("shelf.card.\(item.id)")
-                        }
-                    }.padding(.vertical, 4)
-                }.frame(height: 142)
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 10) {
+                            ForEach(Array(model.items.enumerated()), id: \.element.id) { idx, item in
+                                Card(item: item, number: idx < 9 ? idx + 1 : nil, selected: idx == model.selection)
+                                    .id(item.id)
+                                    .onTapGesture { model.selection = idx; model.onPick?(item, false) }
+                                    .contextMenu { menu(for: item) }
+                                    .accessibilityIdentifier("shelf.card.\(item.id)")
+                            }
+                        }.padding(.vertical, 4)
+                    }.frame(height: 142)
+                    .onChange(of: model.selection) { if let i = model.selected { withAnimation(.snappy(duration: 0.15)) { proxy.scrollTo(i.id) } } }
+                }
             }
         }
-        .padding(14).frame(width: 760, height: 252)
+        .padding(14)
+        .onKeyPress(phases: .down) { press in handleKey(press) }
+        .onAppear { searchFocused = true }
+        .onChange(of: model.focusTick) { searchFocused = true }
+        .frame(width: 760, height: 252)
         .background { ShelfBackdrop() }
         .onChange(of: model.query) { model.refresh() }
         .onChange(of: model.kind) { model.refresh() }
         .onChange(of: model.board) { model.refresh() }
+        .onChange(of: model.app) { model.refresh() }
+    }
+
+    func handleKey(_ p: KeyPress) -> KeyPress.Result {
+        let cmd = p.modifiers.contains(.command)
+        switch p.key {
+        case .leftArrow: model.move(-1); return .handled
+        case .rightArrow: model.move(1); return .handled
+        case .return: model.pickSelected(plain: p.modifiers.contains(.shift)); return .handled
+        case .escape: model.onClose?(); return .handled
+        case .delete where cmd: model.deleteSelected(); return .handled
+        default: break
+        }
+        if cmd, let n = Int(p.characters), (1...9).contains(n) { model.pick(number: n); return .handled }
+        if cmd, p.characters == "y", let i = model.selected { model.onPreview?(i); return .handled }
+        return .ignored
+    }
+
+    var appMenu: some View {
+        Menu {
+            Button("All apps") { model.app = nil }
+            Divider()
+            ForEach(model.apps, id: \.self) { b in Button { model.app = b } label: { Label(AppInfo.name(b), systemImage: "app") } }
+        } label: {
+            if let b = model.app, let icon = AppInfo.icon(b) {
+                Image(nsImage: icon).resizable().frame(width: 16, height: 16)
+            } else { Image(systemName: "app.dashed") }
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .padding(.horizontal, 8).padding(.vertical, 5).background(.quaternary, in: Capsule())
+        .accessibilityLabel("Filter by app").accessibilityIdentifier("shelf.appFilter")
     }
 
     @ViewBuilder func menu(for item: ClipItem) -> some View {
-        Button("Paste") { model.onPick?(item) }
+        Button("Paste") { model.onPick?(item, false) }
+        Button("Paste as Plain Text") { model.onPick?(item, true) }
         Button("Preview") { model.onPreview?(item) }
         Button("Add to Paste Stack") { model.stack.push(item) }
         Menu("Pin to") {
@@ -120,19 +179,32 @@ struct ShelfView: View {
 
 struct Card: View {
     let item: ClipItem
+    var number: Int? = nil
+    var selected = false
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            HStack(spacing: 5) {
+                if let b = item.sourceBundleID, let icon = AppInfo.icon(b) {
+                    Image(nsImage: icon).resizable().frame(width: 14, height: 14)
+                }
                 Text(item.kind.rawValue.uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 Spacer()
                 if item.pinboard != nil { Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.tint) }
+                if item.isRich { Image(systemName: "textformat").font(.caption2).foregroundStyle(.secondary).accessibilityLabel("Formatted") }
             }
             content
             Spacer(minLength: 0)
-            Text(item.createdAt, style: .relative).font(.caption2).foregroundStyle(.secondary)
+            HStack {
+                Text(item.createdAt, style: .relative).font(.caption2).foregroundStyle(.secondary)
+                Spacer()
+                if let n = number { Text("⌘\(n)").font(.caption2.monospacedDigit()).foregroundStyle(.secondary) }
+            }
         }
         .padding(10).frame(width: 150, height: 130, alignment: .topLeading)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay { if selected { RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.tint.opacity(0.22)) } }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     @ViewBuilder var content: some View {
@@ -140,9 +212,31 @@ struct Card: View {
             RoundedRectangle(cornerRadius: 8).fill(c).frame(height: 44).overlay(Text(t).font(.caption.monospaced()).padding(2).background(.thinMaterial, in: Capsule()))
         } else if item.kind == .image, let d = item.data, let img = NSImage(data: d) {
             Image(nsImage: img).resizable().scaledToFill().frame(height: 60).clipShape(RoundedRectangle(cornerRadius: 8))
+        } else if item.kind == .file {
+            VStack(alignment: .leading, spacing: 3) {
+                Image(systemName: "doc.fill").foregroundStyle(.secondary)
+                Text(item.fileNames.joined(separator: "\n")).font(.callout).lineLimit(3)
+            }
         } else {
             Text(item.text ?? item.title).font(.callout).lineLimit(4)
         }
+    }
+}
+
+/// App names and icons for source-app badges and the filter menu.
+@MainActor
+enum AppInfo {
+    private static var icons: [String: NSImage?] = [:]
+    static func url(_ bundleID: String) -> URL? { NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) }
+    static func name(_ bundleID: String) -> String {
+        guard let u = url(bundleID) else { return bundleID }
+        return FileManager.default.displayName(atPath: u.path).replacingOccurrences(of: ".app", with: "")
+    }
+    static func icon(_ bundleID: String) -> NSImage? {
+        if let c = icons[bundleID] { return c }
+        let img = url(bundleID).map { NSWorkspace.shared.icon(forFile: $0.path) }
+        icons[bundleID] = img
+        return img
     }
 }
 

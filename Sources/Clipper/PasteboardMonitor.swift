@@ -5,12 +5,14 @@ import DropCore
 @MainActor
 final class PasteboardMonitor {
     let pasteboard: NSPasteboard
-    let rules: CaptureRules
+    var rules: CaptureRules
     let store: HistoryStore
     var paused = false
     var onChange: (() -> Void)?
     private var lastCount: Int
     private var timer: Timer?
+
+    static let richTypes: [NSPasteboard.PasteboardType] = [.rtf, .html]
 
     init(pasteboard: NSPasteboard = .general, rules: CaptureRules = CaptureRules(), store: HistoryStore) {
         self.pasteboard = pasteboard; self.rules = rules; self.store = store
@@ -33,19 +35,29 @@ final class PasteboardMonitor {
         guard !paused else { return nil }
         let types = Set((pasteboard.types ?? []).map(\.rawValue))
         let image = types.contains("public.png") ? pasteboard.data(forType: .png) : pasteboard.data(forType: .tiff)
-        let snap = PasteboardSnapshot(types: types, string: pasteboard.string(forType: .string), data: image,
-                                      sourceBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+        var extras: [String: Data] = [:]
+        for t in Self.richTypes { if let d = pasteboard.data(forType: t) { extras[t.rawValue] = d } }
+        let files = (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []).map(\.absoluteString)
+        let snap = PasteboardSnapshot(types: types, string: files.isEmpty ? pasteboard.string(forType: .string) : nil, data: files.isEmpty ? image : nil,
+                                      sourceBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+                                      extras: extras, fileURLs: files)
         guard let item = rules.makeItem(from: snap) else { return nil }
         let stored = store.add(item)
         onChange?()
         return stored
     }
 
-    /// Writing our own item back must not be re-captured as a new copy.
-    func write(_ item: ClipItem) {
+    /// Puts an item back on the pasteboard. `plain` drops formatting and turns files into their paths.
+    /// Our own write must not be re-captured as a new copy.
+    func write(_ item: ClipItem, plain: Bool = false) {
         pasteboard.clearContents()
-        if let t = item.text { pasteboard.setString(t, forType: .string) }
-        else if let d = item.data { pasteboard.setData(d, forType: .tiff) }
+        if !plain, let urls = item.fileURLs, !urls.isEmpty {
+            pasteboard.writeObjects(urls.compactMap { URL(string: $0) as NSURL? })
+        } else {
+            if let t = item.text { pasteboard.setString(t, forType: .string) }
+            else if let d = item.data { pasteboard.setData(d, forType: .tiff) }
+            if !plain { for (k, v) in item.extras ?? [:] { pasteboard.setData(v, forType: NSPasteboard.PasteboardType(k)) } }
+        }
         lastCount = pasteboard.changeCount
     }
 }

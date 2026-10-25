@@ -58,6 +58,12 @@ public final class HistoryStore: @unchecked Sendable {
     }
 
     /// Empty boards persist: the list is explicit, plus any board an item still refers to.
+    /// Source apps seen in history, most used first, for the filter chips.
+    public func apps() -> [String] {
+        let counts = Dictionary(grouping: all.compactMap(\.sourceBundleID), by: { $0 }).mapValues(\.count)
+        return counts.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }.map(\.key)
+    }
+
     public func pinboards() -> [String] {
         lock.withLock { boards + Set(items.compactMap(\.pinboard)).subtracting(boards).sorted() }
     }

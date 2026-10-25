@@ -19,6 +19,8 @@ func fixtureModel() -> ShelfModel {
     if let tiff = img.tiffRepresentation {
         store.add(ClipItem(kind: .image, title: "image", data: tiff, sourceBundleID: "com.apple.Preview", checksum: "img1"))
     }
+    store.add(CaptureRules().makeItem(from: .init(types: ["public.file-url"], sourceBundleID: "com.apple.finder", fileURLs: ["file:///Users/me/Report%20Q3.pdf", "file:///Users/me/notes.txt"]))!)
+    store.add(CaptureRules().makeItem(from: .init(types: ["public.rtf"], string: "Formatted paragraph with bold text", sourceBundleID: "com.apple.TextEdit", extras: ["public.rtf": Data([1])]))!)
     let first = store.all.last!
     store.createPinboard("Work"); store.createPinboard("Ideas")
     store.setPinboard("Work", for: first.id)
@@ -80,6 +82,7 @@ func runSnapshots(into dir: String) -> Int32 {
         _ = render(PreviewView(item: item), appearance: ap, large: large, to: out("Preview")); count += 1
         _ = render(StackView(model: m, onPasteNext: {}), appearance: ap, large: large, to: out("Stack")); count += 1
         _ = render(SettingsView(model: m, accessibilityTrusted: false, mcpToken: "x"), appearance: ap, large: large, to: out("Settings")); count += 1
+        _ = render(NewClipView(boards: m.boards, onSave: { _, _ in }, onCancel: {}), appearance: ap, large: large, to: out("NewClip")); count += 1
         print("rendered \(name) shelf \(Int(a.width))x\(Int(a.height)) pt")
     }
     print("SNAPSHOTS \(count) -> \(dir)")

@@ -7,6 +7,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var ignoredBundleIDs: [String] = Array(CaptureRules.defaultIgnored).sorted()
     public var mcpEnabled: Bool = false
     public var mcpPort: UInt16 = 47821
+    public var spotlightEnabled: Bool = false
 
     public init() {}
 
@@ -20,6 +21,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         ignoredBundleIDs = try c.decodeIfPresent([String].self, forKey: .ignoredBundleIDs) ?? def.ignoredBundleIDs
         mcpEnabled = try c.decodeIfPresent(Bool.self, forKey: .mcpEnabled) ?? def.mcpEnabled
         mcpPort = try c.decodeIfPresent(UInt16.self, forKey: .mcpPort) ?? def.mcpPort
+        spotlightEnabled = try c.decodeIfPresent(Bool.self, forKey: .spotlightEnabled) ?? def.spotlightEnabled
     }
 
     public static let capacityRange = 50...10_000

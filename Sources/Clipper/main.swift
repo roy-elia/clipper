@@ -24,6 +24,7 @@ final class App: NSObject, NSApplicationDelegate {
         statusItem?.button?.image = NSImage(systemSymbolName: "paperclip", accessibilityDescription: "Clipper")
         let menu = NSMenu()
         menu.addItem(withTitle: "Show Clipper", action: #selector(toggle), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "New Clip…", action: #selector(showNewClip), keyEquivalent: "n").target = self
         menu.addItem(withTitle: "Paste Stack…", action: #selector(showStack), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
         let pause = menu.addItem(withTitle: "Pause Capture", action: #selector(togglePause(_:)), keyEquivalent: "")
@@ -32,19 +33,27 @@ final class App: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem?.menu = menu
         monitor.onChange = { [weak self] in self?.model.refresh() }
-        model.onPick = { [weak self] item in self?.pick(item) }
+        model.onPick = { [weak self] item, plain in self?.pick(item, plain: plain) }
+        model.onClose = { [weak self] in self?.panel?.orderOut(nil) }
         model.onPreview = { [weak self] item in self?.preview(item) }
         model.onSettingsChanged = { [weak self] in
             guard let self else { return }
             model.settings.save(App.settingsURL)
             applyMCP()
+            if hotkeys.registered != model.settings.hotkey, !hotkeys.register(model.settings.hotkey) {
+                NSLog("Clipper: could not register \(model.settings.hotkey.display)")
+            }
+            applySpotlight()
         }
         applyMCP()
         store.capacity = model.settings.historyCapacity
         hotkeys.onFire = { [weak self] in self?.toggle() }
         if !hotkeys.register(model.settings.hotkey) { NSLog("Clipper: could not register \(model.settings.hotkey.display)") }
         menu.addItem(withTitle: "Paste Needs Accessibility…", action: #selector(grant), keyEquivalent: "").target = self
+        monitor.onChange = { [weak self] in self?.model.refresh(); if self?.model.settings.spotlightEnabled == true { self?.applySpotlight() } }
+        installPanelShortcuts()
         monitor.start()
+        applySpotlight()
         PasteInjector.diag("launch: pid \(ProcessInfo.processInfo.processIdentifier) trusted=\(PasteInjector.trusted) postEventAccess=\(CGPreflightPostEventAccess())")
     }
 
@@ -72,7 +81,7 @@ final class App: NSObject, NSApplicationDelegate {
     /// Pops the oldest stacked clip and pastes it; the stack window never takes focus from the target app.
     func pasteNext() {
         guard let item = model.stack.pop() else { return }
-        pick(item)
+        pick(item, plain: false)
     }
 
     func preview(_ item: ClipItem) {
@@ -85,19 +94,69 @@ final class App: NSObject, NSApplicationDelegate {
         previewPanel?.center(); previewPanel?.makeKeyAndOrderFront(nil)
     }
 
+    /// ⌘1–9 paste, ⌘Y preview, ⌘⌫ delete. A local monitor is used because a non-activating panel never gets
+    /// the key-equivalent pass that normal windows do.
+    func installPanelShortcuts() {
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
+            guard let self, let panel, panel.isVisible, e.window === panel else { return e }
+            let mods = e.modifierFlags.intersection([.command, .option, .control, .shift])
+            // ⇧Return pastes as plain text; the text field would otherwise turn it into a line break.
+            if mods == .shift, e.keyCode == 36 || e.keyCode == 76 { model.pickSelected(plain: true); return nil }
+            guard mods == .command else { return e }
+            if e.keyCode == 51 { model.deleteSelected(); return nil }
+            if let c = e.charactersIgnoringModifiers {
+                if let n = Int(c), (1...9).contains(n) { model.pick(number: n); return nil }
+                if c == "y", let i = model.selected { model.onPreview?(i); return nil }
+            }
+            return e
+        }
+    }
+
+    var newClipWindow: NSWindow?
+    let spotlight = SpotlightIndexer()
+
+    @objc func showNewClip() {
+        let view = NewClipView(boards: store.pinboards(), onSave: { [weak self] text, board in
+            guard let self, var item = CaptureRules().makeItem(from: .init(types: [], string: text, sourceBundleID: Bundle.main.bundleIdentifier)) else { return }
+            item.pinboard = board
+            store.add(item); model.refresh(); newClipWindow?.close(); newClipWindow = nil
+        }, onCancel: { [weak self] in self?.newClipWindow?.close(); self?.newClipWindow = nil })
+        newClipWindow = window("New Clip", view, id: "newclip")
+        NSApp.activate(); newClipWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func applySpotlight() {
+        if model.settings.spotlightEnabled { spotlight.sync(store.all) } else { spotlight.removeAll() }
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for u in urls { handle(URLAction.parse(u)) }
+    }
+
+    func handle(_ a: URLAction?) {
+        switch a {
+        case .show?: if panel?.isVisible != true { toggle() }
+        case .stack?: showStack()
+        case .new?: showNewClip()
+        case .settings?: showSettings()
+        case .search(let q)?: model.query = q; if panel?.isVisible != true { toggle() }
+        case nil: break
+        }
+    }
+
     @objc func grant() {
         if !PasteInjector.requestAccess() { PasteInjector.openAccessibilitySettings() }
     }
 
     /// Hide the shelf, put the clip on the pasteboard, then ⌘V into whatever app is still frontmost.
-    func pick(_ item: ClipItem) {
+    func pick(_ item: ClipItem, plain: Bool = false) {
         PasteInjector.diag("pick: \(item.kind.rawValue) \"\(item.title.prefix(20))\" previousApp=\((panel as? ShelfPanel)?.previousApp?.bundleIdentifier ?? "nil")")
-        monitor.write(item)
+        monitor.write(item, plain: plain)
         panel?.orderOut(nil)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "none"
             let ok = PasteInjector.pasteNow()
-            NSLog("Clipper paste: trusted=%d posted=%d frontmost=%@", PasteInjector.trusted ? 1 : 0, ok ? 1 : 0, front)
+            PasteInjector.diag("pasted plain=\(plain) ok=\(ok) frontmost=\(front)")
             if !ok { PasteInjector.requestAccess() }
         }
     }
@@ -120,7 +179,7 @@ final class App: NSObject, NSApplicationDelegate {
         if panel == nil {
             let p = ShelfPanel(contentRect: NSRect(x: 0, y: 0, width: 760, height: 252),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-            p.isFloatingPanel = true; p.hasShadow = false; p.becomesKeyOnlyIfNeeded = true
+            p.isFloatingPanel = true; p.hasShadow = false
             p.isMovableByWindowBackground = true; p.backgroundColor = .clear; p.isOpaque = false
             let host = NSHostingView(rootView: ShelfView(model: model))
             p.contentView = host
@@ -134,8 +193,9 @@ final class App: NSObject, NSApplicationDelegate {
             let front = NSWorkspace.shared.frontmostApplication
             shelf.previousApp = front?.bundleIdentifier == Bundle.main.bundleIdentifier ? nil : front
         }
-        // Don't take key status from the app being pasted into; the panel becomes key only if a text field is clicked.
-        model.refresh(); panel?.orderFrontRegardless()
+        // Key window so type-to-search and the arrow keys work; closing hands focus back to the previous app.
+        // Activating Clipper is what routes ⌘ shortcuts to the panel; closing re-activates the previous app.
+        model.refresh(); model.focusTick += 1; NSApp.activate(); panel?.makeKeyAndOrderFront(nil)
     }
 }
 
@@ -151,6 +211,7 @@ final class ShelfPanel: NSPanel {
         previousApp = nil
     }
     override func cancelOperation(_ sender: Any?) { orderOut(nil) }
+
 }
 
 /// --selftest: exercises capture on a private pasteboard without touching the user's clipboard.
@@ -174,12 +235,32 @@ final class ShelfPanel: NSPanel {
     check("paused skipped", mon.poll() == nil)
     mon.paused = false
     if let first = store.all.last { mon.write(first); check("write not recaptured", mon.poll() == nil) }
+    // rich text keeps formatting on a normal write and drops it for plain
+    pb.clearContents(); pb.setString("styled", forType: .string); pb.setData(Data("{\\rtf1 styled}".utf8), forType: .rtf)
+    let rich = mon.poll(); check("rich text captured with rtf", rich?.isRich == true)
+    if let r = rich {
+        mon.write(r); check("normal write restores rtf", pb.data(forType: .rtf) != nil)
+        mon.write(r, plain: true); check("plain write drops rtf", pb.data(forType: .rtf) == nil && pb.string(forType: .string) == "styled")
+    }
+    // files round-trip as real file URLs
+    let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("clipper-selftest.txt"); try? "x".write(to: tmp, atomically: true, encoding: .utf8)
+    pb.clearContents(); pb.writeObjects([tmp as NSURL])
+    let f = mon.poll(); check("file captured as file clip", f?.kind == .file && f?.fileNames == ["clipper-selftest.txt"])
+    if let f { mon.write(f); check("file write restores a file URL", (pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL])?.first?.lastPathComponent == "clipper-selftest.txt") }
+    try? FileManager.default.removeItem(at: tmp)
     let m = ShelfModel(store: store)
     m.addBoard("Work"); check("board created and selected", m.boards == ["Work"] && m.board == "Work")
     if let it = store.all.first { m.pin(it, to: "Work"); check("pin shows on board", m.items.count == 1)
         m.stack.push(it); m.delete(it); check("delete clears stack", m.stack.isEmpty) }
     m.renameBoard("Work", "Office"); check("rename", m.board == "Office" && m.boards == ["Office"])
     m.deleteBoard("Office"); check("delete board returns to history", m.board == nil && m.boards.isEmpty)
+    m.board = nil; m.refresh(); m.selection = 0
+    m.move(1); check("selection moves", m.selection == (m.items.count > 1 ? 1 : 0)); m.move(-5); check("selection clamps", m.selection == 0)
+    var picked: (String, Bool)?
+    m.onPick = { picked = ($0.title, $1) }
+    m.pickSelected(plain: true); check("return pastes selection, shift means plain", picked?.1 == true)
+    m.pick(number: 1); check("quick-number picks first", picked?.1 == false)
+    m.app = "no.such.app"; m.refresh(); check("app filter narrows", m.items.isEmpty); m.app = nil; m.refresh()
     m.updateSettings { $0.setCapacity(10) }
     check("capacity clamped and applied", store.capacity == 50)
     let hc = HotkeyCenter()

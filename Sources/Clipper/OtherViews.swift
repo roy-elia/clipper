@@ -66,11 +66,18 @@ struct SettingsView: View {
     @ObservedObject var model: ShelfModel
     var accessibilityTrusted: Bool
     var mcpToken: String = ""
+    @State private var loginEnabled = LoginItem.enabled
     var onGrant: () -> Void = {}
     var body: some View {
         Form {
             Section("General") {
-                LabeledContent("Open shelf") { Text(model.settings.hotkey.display).font(.body.monospaced()) }
+                LabeledContent("Open shelf") {
+                    HotkeyRecorder(current: model.settings.hotkey) { hk in model.updateSettings { $0.hotkey = hk } }
+                }
+                Toggle("Open at login", isOn: Binding(get: { loginEnabled }, set: { v in LoginItem.set(v); loginEnabled = LoginItem.enabled }))
+                    .accessibilityIdentifier("settings.login")
+                Toggle("Index clips in Spotlight", isOn: Binding(get: { model.settings.spotlightEnabled }, set: { v in model.updateSettings { $0.spotlightEnabled = v } }))
+                    .accessibilityIdentifier("settings.spotlight")
                 Toggle("Play sounds", isOn: Binding(get: { model.settings.playSounds }, set: { v in model.updateSettings { $0.playSounds = v } }))
                     .accessibilityIdentifier("settings.sounds")
             }
