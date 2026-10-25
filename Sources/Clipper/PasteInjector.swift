@@ -17,15 +17,23 @@ enum PasteInjector {
     }
 
     /// Returns false (and posts nothing) when not trusted, so the caller can fall back to copy-only.
+    /// Sends the whole chord (⌘ down, V down, V up, ⌘ up) the way a keyboard would, and holds back the user's real
+    /// modifier state for a moment so a still-held ⇧ or ⌥ from the shortcut cannot change the paste into something else.
     @discardableResult
     static func pasteNow(plain: Bool = false) -> Bool {
         guard trusted else { return false }
         let src = CGEventSource(stateID: .combinedSessionState)
-        let down = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true)
-        let up = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false)
+        src?.setLocalEventsFilterDuringSuppressionState([.permitLocalMouseEvents, .permitSystemDefinedEvents],
+                                                        state: .eventSuppressionStateSuppressionInterval)
+        src?.localEventsSuppressionInterval = 0.0
         let flags: CGEventFlags = plain ? [.maskCommand, .maskAlternate, .maskShift] : .maskCommand
-        down?.flags = flags; up?.flags = flags
-        down?.post(tap: .cghidEventTap); up?.post(tap: .cghidEventTap)
+        let steps: [(CGKeyCode, Bool, CGEventFlags)] = [(55, true, .maskCommand), (9, true, flags), (9, false, flags), (55, false, [])]
+        for (key, down, fl) in steps {
+            let e = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: down)
+            e?.flags = fl
+            e?.post(tap: .cgAnnotatedSessionEventTap)
+            usleep(8_000)
+        }
         return true
     }
 }
