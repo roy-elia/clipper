@@ -45,6 +45,7 @@ final class App: NSObject, NSApplicationDelegate {
         if !hotkeys.register(model.settings.hotkey) { NSLog("Clipper: could not register \(model.settings.hotkey.display)") }
         menu.addItem(withTitle: "Paste Needs Accessibility…", action: #selector(grant), keyEquivalent: "").target = self
         monitor.start()
+        PasteInjector.diag("launch: pid \(ProcessInfo.processInfo.processIdentifier) trusted=\(PasteInjector.trusted) postEventAccess=\(CGPreflightPostEventAccess())")
     }
 
     func window(_ title: String, _ view: some View, id: String) -> NSWindow {
@@ -90,6 +91,7 @@ final class App: NSObject, NSApplicationDelegate {
 
     /// Hide the shelf, put the clip on the pasteboard, then ⌘V into whatever app is still frontmost.
     func pick(_ item: ClipItem) {
+        PasteInjector.diag("pick: \(item.kind.rawValue) \"\(item.title.prefix(20))\" previousApp=\((panel as? ShelfPanel)?.previousApp?.bundleIdentifier ?? "nil")")
         monitor.write(item)
         panel?.orderOut(nil)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {

@@ -3,6 +3,14 @@ import ApplicationServices
 
 /// Pastes into the frontmost app by posting ⌘V. That needs the Accessibility permission.
 enum PasteInjector {
+    /// Plain-file diagnostics: unified-log redaction hides NSLog arguments for signed apps.
+    static func diag(_ line: String) {
+        let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Clipper/clipper.log")
+        let stamped = "\(ISO8601DateFormatter().string(from: Date())) \(line)\n"
+        if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(Data(stamped.utf8)); try? h.close() }
+        else { try? stamped.write(to: url, atomically: true, encoding: .utf8) }
+    }
+
     static var trusted: Bool { AXIsProcessTrusted() }
 
     /// Shows the system prompt once and returns the current state.
@@ -21,6 +29,7 @@ enum PasteInjector {
     /// modifier state for a moment so a still-held ⇧ or ⌥ from the shortcut cannot change the paste into something else.
     @discardableResult
     static func pasteNow(plain: Bool = false) -> Bool {
+        diag("paste: AXIsProcessTrusted=\(trusted) postEventAccess=\(CGPreflightPostEventAccess()) frontmost=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "none")")
         guard trusted else { return false }
         let src = CGEventSource(stateID: .combinedSessionState)
         src?.setLocalEventsFilterDuringSuppressionState([.permitLocalMouseEvents, .permitSystemDefinedEvents],
@@ -34,6 +43,7 @@ enum PasteInjector {
             e?.post(tap: .cgAnnotatedSessionEventTap)
             usleep(8_000)
         }
+        diag("paste: chord posted")
         return true
     }
 }
