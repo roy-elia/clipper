@@ -24,5 +24,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSHumanReadableCopyright</key><string>Personal build</string>
 </dict></plist>
 PLIST
-codesign --force --deep --sign - "$APP" 2>&1 | tail -1
+# A stable identity keeps the Accessibility grant across rebuilds; ad-hoc signing changes it every build.
+IDENTITY="Clipper Local Signing"
+security find-identity -p codesigning | grep -q "$IDENTITY" || { echo "no '$IDENTITY' identity; signing ad-hoc (Accessibility must be re-allowed after each build)"; IDENTITY=-; }
+codesign --force --deep --sign "$IDENTITY" "$APP" 2>&1 | tail -1
 codesign --verify --deep --strict "$APP" && echo "packaged $APP build $BUILD"
