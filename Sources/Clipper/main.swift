@@ -10,6 +10,7 @@ final class App: NSObject, NSApplicationDelegate {
     lazy var model = ShelfModel(store: store)
     var panel: NSPanel?
     var statusItem: NSStatusItem?
+    let hotkeys = HotkeyCenter()
 
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -22,10 +23,24 @@ final class App: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem?.menu = menu
         monitor.onChange = { [weak self] in self?.model.refresh() }
-        model.onPick = { [weak self] item in
-            self?.monitor.write(item); self?.panel?.orderOut(nil)
-        }
+        model.onPick = { [weak self] item in self?.pick(item) }
+        hotkeys.onFire = { [weak self] in self?.toggle() }
+        if !hotkeys.register(.default) { NSLog("Clipper: could not register \(Hotkey.default.display)") }
+        menu.addItem(withTitle: "Paste Needs Accessibility…", action: #selector(grant), keyEquivalent: "").target = self
         monitor.start()
+    }
+
+    @objc func grant() {
+        if !PasteInjector.requestAccess() { PasteInjector.openAccessibilitySettings() }
+    }
+
+    /// Hide the shelf, put the clip on the pasteboard, then ⌘V into whatever app is still frontmost.
+    func pick(_ item: ClipItem) {
+        monitor.write(item)
+        panel?.orderOut(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            if !PasteInjector.pasteNow() { PasteInjector.requestAccess() }
+        }
     }
 
     @objc func togglePause(_ s: NSMenuItem) {
@@ -34,7 +49,7 @@ final class App: NSObject, NSApplicationDelegate {
 
     @objc func toggle() {
         if panel == nil {
-            let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 760, height: 190),
+            let p = ShelfPanel(contentRect: NSRect(x: 0, y: 0, width: 760, height: 190),
                             styleMask: [.nonactivatingPanel, .fullSizeContentView, .titled], backing: .buffered, defer: false)
             p.titleVisibility = .hidden; p.titlebarAppearsTransparent = true; p.isFloatingPanel = true
             p.isMovableByWindowBackground = true; p.backgroundColor = .clear
@@ -45,8 +60,15 @@ final class App: NSObject, NSApplicationDelegate {
         if let s = NSScreen.main, let p = panel {
             p.setFrameOrigin(NSPoint(x: s.frame.midX - 380, y: s.frame.minY + 60))
         }
+        if panel?.isVisible == true { panel?.orderOut(nil); return }
         model.refresh(); panel?.makeKeyAndOrderFront(nil)
     }
+}
+
+/// Non-activating so the app you are pasting into stays frontmost, yet still able to take typing for search.
+final class ShelfPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override func cancelOperation(_ sender: Any?) { orderOut(nil) }
 }
 
 /// --selftest: exercises capture on a private pasteboard without touching the user's clipboard.
@@ -70,6 +92,12 @@ final class App: NSObject, NSApplicationDelegate {
     check("paused skipped", mon.poll() == nil)
     mon.paused = false
     if let first = store.all.last { mon.write(first); check("write not recaptured", mon.poll() == nil) }
+    let hc = HotkeyCenter()
+    check("hotkey registers", hc.register(Hotkey(keyCode: 9, modifiers: Hotkey.cmd | Hotkey.option | Hotkey.control)))
+    check("bad hotkey rejected", !hc.register(Hotkey(keyCode: 9, modifiers: Hotkey.shift)))
+    hc.unregister()
+    print("INFO accessibility trusted:", PasteInjector.trusted)
+    check("paste is a no-op without permission", PasteInjector.trusted || !PasteInjector.pasteNow())
     print(fails == 0 ? "SELFTEST OK" : "SELFTEST FAILED \(fails)")
     return fails == 0 ? 0 : 1
 }
