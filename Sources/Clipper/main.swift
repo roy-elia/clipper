@@ -19,6 +19,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static let tokenURL = App.support.appendingPathComponent("mcp-token")
     lazy var mcpToken = MCPServer.loadToken(at: App.tokenURL)
     var statusItem: NSStatusItem?
+    var statusMenu: NSMenu?
+    var clickAwayMonitor: Any?
+    var wheelMonitor: Any?
     let hotkeys = HotkeyCenter()
     let stackHotkeys = HotkeyCenter(id: 2)
     let sounds = SoundFeedback()
@@ -34,6 +37,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static let syncStateURL = support.appendingPathComponent("sync-state.json")
     var syncState = SyncState()
     var syncing = false
+    var confirming = false
     static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev" }
     static var build: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev" }
 
@@ -47,6 +51,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(withTitle: "New Clip…", action: #selector(showNewClip), keyEquivalent: "n").target = self
         menu.addItem(withTitle: "Paste Stack…", action: #selector(showStack), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
+        menu.addItem(withTitle: "Clear History…", action: #selector(confirmClear), keyEquivalent: "").target = self
         collectItem = menu.addItem(withTitle: "Collect Copies to Stack", action: #selector(toggleCollect(_:)), keyEquivalent: "")
         collectItem?.target = self
         let pause = menu.addItem(withTitle: "Pause Capture", action: #selector(togglePause(_:)), keyEquivalent: "")
@@ -58,11 +63,20 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(withTitle: "Getting Started…", action: #selector(showGettingStarted), keyEquivalent: "").target = self
         menu.addItem(withTitle: "About Clipper", action: #selector(showAbout), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        statusItem?.menu = menu
+        statusMenu = menu
+        statusItem?.button?.target = self
+        statusItem?.button?.action = #selector(statusClicked)
+        statusItem?.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         monitor.onChange = { [weak self] in self?.model.refresh() }
         model.onPick = { [weak self] item, plain in self?.pick(item, plain: plain) }
         model.onClose = { [weak self] in self?.panel?.orderOut(nil) }
         model.onPreview = { [weak self] item in self?.preview(item) }
+        model.onClear = { [weak self] in self?.confirmClear() }
+        model.onDrop = { [weak self] providers in self?.ingest(providers) ?? false }
+        NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { if self?.panel?.isVisible == true, self?.confirming == false { self?.panel?.orderOut(nil) } }
+        }
+        installWheelScrolling()
         model.onSettingsChanged = { [weak self] in
             guard let self else { return }
             model.settings.save(App.settingsURL)
@@ -290,7 +304,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .collect?: if let m = collectItem { toggleCollect(m) }
         case .pause?: togglePause(pauseItem ?? NSMenuItem())
         case .about?: showAbout()
-        case .search(let q)?: model.query = q; if panel?.isVisible != true { toggle() }
+        case .clear?: confirmClear()
+        case .search(let q)?: if panel?.isVisible != true { toggle() }; model.query = q; model.refresh()
         case nil: break
         }
     }
@@ -333,19 +348,106 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         osd.show(monitor.paused ? "Capture paused" : "Capture resumed", symbol: monitor.paused ? "pause.circle" : "play.circle", hideFromSharing: model.settings.hideFromSharing)
     }
 
+    @objc func statusClicked() {
+        guard let e = NSApp.currentEvent else { toggle(); return }
+        if e.type == .rightMouseUp || e.modifierFlags.contains(.control), let m = statusMenu, let b = statusItem?.button {
+            panel?.orderOut(nil)
+            m.popUp(positioning: nil, at: NSPoint(x: 0, y: b.bounds.height + 4), in: b)
+        } else { toggle() }
+    }
+
+    /// Always asks first: deleting history cannot be undone.
+    @objc func confirmClear() {
+        let total = store.all.count, pinned = store.all.filter { $0.pinboard != nil }.count
+        guard total > 0 else { osd.show("Nothing to clear", symbol: "tray", hideFromSharing: model.settings.hideFromSharing); return }
+        confirming = true; defer { confirming = false }
+        NSApp.activate()
+        let a = NSAlert()
+        a.messageText = "Clear all saved clips?"
+        a.informativeText = "This deletes \(total) saved \(total == 1 ? "clip" : "clips") from Clipper and its synced copies. It cannot be undone."
+        a.alertStyle = .warning
+        a.addButton(withTitle: "Delete All")
+        if pinned > 0 { a.addButton(withTitle: "Keep Pinned (\(pinned))") }
+        a.addButton(withTitle: "Cancel")
+        let r = a.runModal()
+        let keep: Bool
+        switch (r, pinned > 0) {
+        case (.alertFirstButtonReturn, _): keep = false
+        case (.alertSecondButtonReturn, true): keep = true
+        default: return
+        }
+        let n = store.clear(keepPinned: keep)
+        model.refresh()
+        osd.show("Cleared \(n) \(n == 1 ? "clip" : "clips")", symbol: "trash", hideFromSharing: model.settings.hideFromSharing)
+    }
+
+    /// Drops onto the shelf save the dropped images, files and text as clips.
+    func ingest(_ providers: [NSItemProvider]) -> Bool {
+        let rules = monitor.rules
+        let me = Bundle.main.bundleIdentifier
+        var accepted = false
+        for p in providers {
+            if p.hasItemConformingToTypeIdentifier("public.file-url") {
+                accepted = true
+                p.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url else { return }
+                    Task { @MainActor in
+                        let snap = PasteboardSnapshot(types: ["public.file-url"], string: nil, data: nil, sourceBundleID: me, fileURLs: [url.absoluteString])
+                        if let item = rules.makeItem(from: snap) { _ = self.store.add(item); self.model.refresh() }
+                    }
+                }
+            } else if p.canLoadObject(ofClass: NSImage.self) {
+                accepted = true
+                p.loadObject(ofClass: NSImage.self) { obj, _ in
+                    guard let img = obj as? NSImage, let tiff = img.tiffRepresentation,
+                          let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return }
+                    Task { @MainActor in
+                        let snap = PasteboardSnapshot(types: ["public.png"], string: nil, data: png, sourceBundleID: me)
+                        if let item = rules.makeItem(from: snap) { _ = self.store.add(item); self.model.refresh() }
+                    }
+                }
+            } else if p.canLoadObject(ofClass: NSString.self) {
+                accepted = true
+                _ = p.loadObject(ofClass: NSString.self) { obj, _ in
+                    guard let str = obj as? String else { return }
+                    Task { @MainActor in
+                        let snap = PasteboardSnapshot(types: ["public.utf8-plain-text"], string: str, data: nil, sourceBundleID: me)
+                        if let item = rules.makeItem(from: snap) { _ = self.store.add(item); self.model.refresh() }
+                    }
+                }
+            }
+        }
+        return accepted
+    }
+
+    /// A mouse wheel only scrolls vertically; turn it sideways so it moves along the row of clips.
+    func installWheelScrolling() {
+        wheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] e in
+            guard let self, let panel, panel.isVisible, e.window === panel,
+                  !e.hasPreciseScrollingDeltas, abs(e.scrollingDeltaY) > abs(e.scrollingDeltaX),
+                  let cg = e.cgEvent?.copy() else { return e }
+            cg.setDoubleValueField(.scrollWheelEventDeltaAxis2, value: cg.getDoubleValueField(.scrollWheelEventDeltaAxis1))
+            cg.setDoubleValueField(.scrollWheelEventDeltaAxis1, value: 0)
+            cg.setDoubleValueField(.scrollWheelEventPointDeltaAxis2, value: cg.getDoubleValueField(.scrollWheelEventPointDeltaAxis1))
+            cg.setDoubleValueField(.scrollWheelEventPointDeltaAxis1, value: 0)
+            cg.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: cg.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1))
+            cg.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: 0)
+            return NSEvent(cgEvent: cg) ?? e
+        }
+    }
+
     @objc func toggle() {
         if panel == nil {
-            let p = ShelfPanel(contentRect: NSRect(x: 0, y: 0, width: 760, height: 252),
+            let p = ShelfPanel(contentRect: NSRect(x: 0, y: 0, width: 900, height: 300),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             p.isFloatingPanel = true; p.hasShadow = false
-            p.isMovableByWindowBackground = true; p.backgroundColor = .clear; p.isOpaque = false
+            p.backgroundColor = .clear; p.isOpaque = false
+            p.level = .popUpMenu
+            p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             let host = NSHostingView(rootView: ShelfView(model: model))
             p.contentView = host
             panel = p
             applyPrivacy()
-        }
-        if let s = NSScreen.main, let p = panel {
-            p.setFrameOrigin(NSPoint(x: s.visibleFrame.midX - 380, y: s.visibleFrame.minY + 24))
         }
         if panel?.isVisible == true { panel?.orderOut(nil); return }
         if let shelf = panel as? ShelfPanel {
@@ -354,10 +456,40 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             model.targetApp = shelf.previousApp?.bundleIdentifier
         }
         model.picks = model.settings.opensOnPicks && !PickRanker(log: model.log).rank(store.all, for: model.targetApp, limit: 1).isEmpty
-        model.board = nil; model.selection = 0
-        // Key window so type-to-search and the arrow keys work; closing hands focus back to the previous app.
-        // Activating Clipper is what routes ⌘ shortcuts to the panel; closing re-activates the previous app.
-        model.refresh(); model.focusTick += 1; NSApp.activate(); panel?.makeKeyAndOrderFront(nil)
+        model.board = nil; model.selection = 0; model.query = ""
+        model.refresh(); model.focusTick += 1
+        // The shelf rises from the bottom edge of the screen the pointer is on, full width with a small margin.
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
+        if let v = screen?.visibleFrame, let p = panel {
+            let inset: CGFloat = 12, h: CGFloat = 300
+            let end = NSRect(x: v.minX + inset, y: v.minY + inset, width: v.width - inset * 2, height: h)
+            let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            p.setFrame(reduce ? end : end.offsetBy(dx: 0, dy: -(h + inset)), display: false)
+            p.alphaValue = reduce ? 0 : 1
+            NSApp.activate(); p.makeKeyAndOrderFront(nil)
+            NSAnimationContext.runAnimationGroup { c in
+                c.duration = reduce ? 0.15 : 0.32
+                c.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
+                p.animator().setFrame(end, display: true)
+                p.animator().alphaValue = 1
+            }
+        }
+        startClickAway()
+    }
+
+    func stopClickAway() {
+        if let m = clickAwayMonitor { NSEvent.removeMonitor(m); clickAwayMonitor = nil }
+    }
+
+    func startClickAway() {
+        if let m = clickAwayMonitor { NSEvent.removeMonitor(m) }
+        clickAwayMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let p = self.panel, p.isVisible, !self.confirming else { return }
+                if !p.frame.contains(NSEvent.mouseLocation) { p.orderOut(nil) }
+            }
+        }
     }
 }
 
@@ -369,6 +501,7 @@ final class ShelfPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override func orderOut(_ sender: Any?) {
         super.orderOut(sender)
+        (NSApp.delegate as? App)?.stopClickAway()
         previousApp?.activate()
         previousApp = nil
     }

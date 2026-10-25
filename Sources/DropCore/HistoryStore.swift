@@ -54,6 +54,20 @@ public final class HistoryStore: @unchecked Sendable {
         }
     }
 
+    /// Deletes saved clips. Returns how many were removed. Deletions are recorded so they sync as deletions.
+    @discardableResult
+    public func clear(keepPinned: Bool) -> Int {
+        lock.withLock {
+            let doomed = items.filter { !(keepPinned && $0.pinboard != nil) }
+            let now = Date()
+            for i in doomed { tombstones[i.id] = now }
+            let ids = Set(doomed.map(\.id))
+            items.removeAll { ids.contains($0.id) }
+            persist()
+            return doomed.count
+        }
+    }
+
     public func markSecret(_ id: UUID, _ on: Bool = true, byModel: Bool = false) {
         lock.withLock { if let i = items.firstIndex(where: { $0.id == id }) { items[i].sensitive = on ? true : nil; items[i].modelFlagged = on && byModel ? true : nil; items[i].modifiedAt = Date(); persist() } }
     }

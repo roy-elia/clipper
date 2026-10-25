@@ -75,13 +75,13 @@ func runSnapshots(into dir: String) -> Int32 {
     for (name, ap, large) in looks {
         func out(_ screen: String) -> URL { URL(fileURLWithPath: dir).appendingPathComponent("\(screen)-\(name).png") }
         m.picks = false; m.board = nil; m.refresh()
-        let a = render(ShelfView(model: m), appearance: ap, large: large, to: out("Shelf")); count += 1
+        let a = render(ShelfView(model: m).frame(width: 1400), appearance: ap, large: large, to: out("Shelf")); count += 1
         m.picks = true; m.targetApp = "com.apple.Terminal"; m.refresh()
-        _ = render(ShelfView(model: m), appearance: ap, large: large, to: out("Shelf-Picks")); count += 1
+        _ = render(ShelfView(model: m).frame(width: 1400), appearance: ap, large: large, to: out("Shelf-Picks")); count += 1
         m.picks = false; m.board = "Work"; m.refresh()
-        _ = render(ShelfView(model: m), appearance: ap, large: large, to: out("Shelf-Work")); count += 1
+        _ = render(ShelfView(model: m).frame(width: 1400), appearance: ap, large: large, to: out("Shelf-Work")); count += 1
         m.board = "Ideas"; m.refresh()
-        _ = render(ShelfView(model: m), appearance: ap, large: large, to: out("Shelf-Empty")); count += 1
+        _ = render(ShelfView(model: m).frame(width: 1400), appearance: ap, large: large, to: out("Shelf-Empty")); count += 1
         _ = render(PreviewView(item: item), appearance: ap, large: large, to: out("Preview")); count += 1
         _ = render(StackView(model: m, onPasteNext: {}), appearance: ap, large: large, to: out("Stack")); count += 1
         _ = render(SettingsView(model: m, accessibilityTrusted: false, mcpToken: "x"), appearance: ap, large: large, to: out("Settings")); count += 1

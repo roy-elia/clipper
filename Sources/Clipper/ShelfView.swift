@@ -23,6 +23,8 @@ final class ShelfModel: ObservableObject {
     var onClose: (() -> Void)?
     var onShare: ((ClipItem) -> Void)?
     var onPreview: ((ClipItem) -> Void)?
+    var onClear: (() -> Void)?
+    var onDrop: (([NSItemProvider]) -> Bool)?
     var onSettingsChanged: (() -> Void)?
 
     init(store: HistoryStore, settings: AppSettings = AppSettings()) {
@@ -60,7 +62,10 @@ struct ShelfView: View {
     @ObservedObject var model: ShelfModel
     @State private var newBoard = ""
     @State private var adding = false
+    @State private var dropTargeted = false
     @FocusState private var searchFocused: Bool
+
+    static let cardSize = CGSize(width: 216, height: 196)
 
     var body: some View {
         VStack(spacing: 10) {
@@ -86,6 +91,11 @@ struct ShelfView: View {
                     Label("\(model.stack.items.count) in stack", systemImage: "square.stack.3d.up")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                Text(model.items.count == 1 ? "1 clip" : "\(model.items.count) clips").font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("shelf.count")
+                Button { model.onClear?() } label: { Image(systemName: "trash") }
+                    .buttonStyle(.plain).padding(7).background(.quaternary, in: Circle())
+                    .help("Clear all saved clips").accessibilityLabel("Clear history").accessibilityIdentifier("shelf.clear")
             }
             HStack(spacing: 8) {
                 TextField("Search clips", text: $model.query)
@@ -99,36 +109,50 @@ struct ShelfView: View {
                 appMenu
             }
             if model.items.isEmpty {
-                Text(model.picks ? "No suggestions yet" : model.board == nil ? "Nothing copied yet" : "Right-click a clip, then Pin to, to add it here")
-                    .foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack(spacing: 6) {
+                    Image(systemName: dropTargeted ? "arrow.down.circle" : "tray").font(.title).foregroundStyle(.secondary)
+                    Text(model.picks ? "No suggestions yet" : model.board == nil ? "Nothing copied yet. Drop images, files or text here to save them." : "Right-click a clip, then Pin to, to add it here")
+                        .foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: 10) {
+                    ScrollView(.horizontal, showsIndicators: true) {
+                        LazyHStack(spacing: 12) {
                             ForEach(Array(model.items.enumerated()), id: \.element.id) { idx, item in
                                 Card(item: item, number: idx < 9 ? idx + 1 : nil, selected: idx == model.selection)
                                     .id(item.id)
                                     .onTapGesture { model.selection = idx; model.onPick?(item, false) }
+                                    .onDrag { provider(for: item) }
                                     .contextMenu { menu(for: item) }
                                     .accessibilityIdentifier("shelf.card.\(item.id)")
                             }
-                        }.padding(.vertical, 4)
-                    }.frame(height: 142)
+                        }.padding(.vertical, 4).padding(.horizontal, 2)
+                    }
                     .onChange(of: model.selection) { if let i = model.selected { if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { proxy.scrollTo(i.id) } else { withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { proxy.scrollTo(i.id) } } } }
                 }
             }
         }
         .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 300, maxHeight: 300)
+        .background { ShelfBackdrop() }
+        .clipperStyle()
+        .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Palette.lilac.opacity(0.18)).allowsHitTesting(false) } }
+        .onDrop(of: [.fileURL, .image, .plainText], isTargeted: $dropTargeted) { model.onDrop?($0) ?? false }
         .onKeyPress(phases: .down) { press in handleKey(press) }
         .onAppear { searchFocused = true }
         .onChange(of: model.focusTick) { searchFocused = true }
-        .frame(width: 760, height: 252)
-        .clipperStyle()
-        .background { ShelfBackdrop() }
         .onChange(of: model.query) { model.refresh() }
         .onChange(of: model.kind) { model.refresh() }
         .onChange(of: model.board) { model.refresh() }
         .onChange(of: model.app) { model.refresh() }
+    }
+
+    /// What leaves the shelf when a card is dragged: the image, the files, or the text.
+    func provider(for item: ClipItem) -> NSItemProvider {
+        if item.isSecret { return NSItemProvider() }
+        if let urls = item.fileURLs, let u = urls.first.flatMap({ URL(string: $0) }) { return NSItemProvider(contentsOf: u) ?? NSItemProvider() }
+        if let d = item.data, let img = NSImage(data: d) { return NSItemProvider(object: img) }
+        return NSItemProvider(object: (item.text ?? item.title) as NSString)
     }
 
     func handleKey(_ p: KeyPress) -> KeyPress.Result {
@@ -199,61 +223,101 @@ struct ShelfView: View {
     }
 }
 
+/// A saved clip: a header in the source app's colour with the kind, age and app icon, the content, then a footer with
+/// the details (size, length, host) and the ⌘ number that pastes it.
 struct Card: View {
     let item: ClipItem
     var number: Int? = nil
     var selected = false
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 5) {
-                if let b = item.sourceBundleID, let icon = AppInfo.icon(b) {
-                    Image(nsImage: icon).resizable().frame(width: 14, height: 14)
+        let header = AppInfo.color(item.sourceBundleID)
+        let ink = AppInfo.ink(on: header)
+        VStack(spacing: 0) {
+            ZStack(alignment: .topLeading) {
+                header
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(kindTitle).font(.title3.weight(.bold))
+                    Text(Relative.string(from: item.createdAt)).font(.caption)
                 }
-                Text(item.kind.rawValue.uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                Spacer()
-                if item.pinboard != nil { Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.tint) }
-                if item.isRich { Image(systemName: "textformat").font(.caption2).foregroundStyle(.secondary).accessibilityLabel("Formatted") }
-            }
-            content
-            Spacer(minLength: 0)
+                .foregroundStyle(ink).padding(.leading, 12).padding(.top, 9)
+                HStack(spacing: 4) {
+                    if item.pinboard != nil { Image(systemName: "pin.fill").font(.caption2) }
+                    if item.isRich { Image(systemName: "textformat").font(.caption2).accessibilityLabel("Formatted") }
+                }.foregroundStyle(ink).frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 58).padding(.top, 12)
+                if let b = item.sourceBundleID, let icon = AppInfo.icon(b) {
+                    Image(nsImage: icon).resizable().frame(width: 42, height: 42)
+                        .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 8).padding(.top, 7)
+                }
+            }.frame(height: 56)
+            content.padding(10).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(Color(nsColor: .textBackgroundColor).opacity(0.55))
             HStack {
-                Text(item.createdAt, style: .relative).font(.caption2).foregroundStyle(.secondary)
-                Spacer()
-                if let n = number { Text("⌘\(n)").font(.caption2.monospacedDigit()).foregroundStyle(.secondary) }
+                Spacer(minLength: 0)
+                Text(item.detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 0)
             }
+            .overlay(alignment: .trailing) {
+                if let n = number {
+                    Text("⌘\(n)").font(.caption2.monospacedDigit().weight(.semibold)).foregroundStyle(.secondary)
+                        .padding(.horizontal, 7).padding(.vertical, 2).background(.quaternary, in: Capsule())
+                }
+            }
+            .padding(.horizontal, 8).frame(height: 28).background(Color(nsColor: .textBackgroundColor).opacity(0.55))
         }
-        .padding(10).frame(width: 150, height: 130, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay { if selected { RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Palette.lilac.opacity(0.35)) } }
-        .accessibilityElement(children: .combine)
+        .frame(width: ShelfView.cardSize.width, height: ShelfView.cardSize.height)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(4)
+        .background { if selected { RoundedRectangle(cornerRadius: 26, style: .continuous).fill(Palette.lilac) } }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(kindTitle), \(item.isSecret ? "hidden secret" : item.title), \(item.detail)")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
+    var kindTitle: String { item.isSecret ? "Secret" : item.kind.rawValue.capitalized }
+
     @ViewBuilder var content: some View {
         if item.isSecret {
-            VStack(alignment: .leading, spacing: 4) {
-                Label("Secret", systemImage: "lock.fill").font(.callout.weight(.semibold))
-                Text("••••••••••").font(.callout).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Image(systemName: "lock.fill").font(.title2)
+                Text("••••••••••").foregroundStyle(.secondary)
             }
         } else if item.kind == .color, let t = item.text, let c = Color(hex: t) {
-            RoundedRectangle(cornerRadius: 8).fill(c).frame(height: 44).overlay(Text(t).font(.caption.monospaced()).padding(2).background(.thinMaterial, in: Capsule()))
+            RoundedRectangle(cornerRadius: 10, style: .continuous).fill(c).frame(maxHeight: .infinity)
+                .overlay(Text(t).font(.callout.monospaced()).padding(4).background(.thinMaterial, in: Capsule()))
         } else if item.kind == .image, let d = item.data, let img = NSImage(data: d) {
-            Image(nsImage: img).resizable().scaledToFill().frame(height: 60).clipShape(RoundedRectangle(cornerRadius: 8))
+            Color.clear.overlay { Image(nsImage: img).resizable().scaledToFill() }
+                .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         } else if item.kind == .file {
-            VStack(alignment: .leading, spacing: 3) {
-                Image(systemName: "doc.fill").foregroundStyle(.secondary)
-                Text(item.fileNames.joined(separator: "\n")).font(.callout).lineLimit(3)
+            VStack(alignment: .leading, spacing: 4) {
+                Image(systemName: "doc.fill").font(.title2).foregroundStyle(.secondary)
+                Text(item.fileNames.joined(separator: "\n")).font(.callout).lineLimit(4)
+            }
+        } else if item.kind == .link {
+            VStack(alignment: .leading, spacing: 4) {
+                Image(systemName: "link").font(.title3).foregroundStyle(.secondary)
+                Text(item.text ?? item.title).font(.callout).lineLimit(5)
             }
         } else {
-            Text(item.text ?? item.title).font(.callout).lineLimit(4)
+            Text(item.text ?? item.title).font(.callout).lineLimit(7)
         }
     }
 }
 
-/// App names and icons for source-app badges and the filter menu.
+enum Relative {
+    static func string(from date: Date, now: Date = Date()) -> String {
+        if now.timeIntervalSince(date) < 15 { return "now" }
+        let f = RelativeDateTimeFormatter(); f.unitsStyle = .full
+        return f.localizedString(for: date, relativeTo: now)
+    }
+}
+
+/// App names, icons and header colours (the average colour of the app's icon) for source-app badges.
 @MainActor
 enum AppInfo {
     private static var icons: [String: NSImage?] = [:]
+    private static var colors: [String: Color] = [:]
     static func url(_ bundleID: String) -> URL? { NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) }
     static func name(_ bundleID: String) -> String {
         guard let u = url(bundleID) else { return bundleID }
@@ -264,6 +328,45 @@ enum AppInfo {
         let img = url(bundleID).map { NSWorkspace.shared.icon(forFile: $0.path) }
         icons[bundleID] = img
         return img
+    }
+
+    /// Average of the icon's saturated, mid-brightness pixels; neutral grey when there is no icon or it is colourless.
+    static func color(_ bundleID: String?) -> Color {
+        guard let id = bundleID else { return Color(white: 0.45) }
+        if let c = colors[id] { return c }
+        let c = icon(id).flatMap(dominant) ?? Color(white: 0.45)
+        colors[id] = c
+        return c
+    }
+
+    static func dominant(_ image: NSImage) -> Color? {
+        let n = 16
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: n, pixelsHigh: n, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                         isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let ctx = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+        NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = ctx
+        image.draw(in: NSRect(x: 0, y: 0, width: n, height: n)); NSGraphicsContext.restoreGraphicsState()
+        var r = 0.0, g = 0.0, b = 0.0, w = 0.0
+        for y in 0..<n { for x in 0..<n {
+            guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB), c.alphaComponent > 0.8 else { continue }
+            let mx = max(c.redComponent, c.greenComponent, c.blueComponent), mn = min(c.redComponent, c.greenComponent, c.blueComponent)
+            let sat = mx == 0 ? 0 : (mx - mn) / mx
+            guard sat > 0.25, mx > 0.25, mx < 0.99 || sat > 0.5 else { continue }
+            let weight = Double(sat)
+            r += Double(c.redComponent) * weight; g += Double(c.greenComponent) * weight; b += Double(c.blueComponent) * weight; w += weight
+        } }
+        guard w > 0 else { return nil }
+        // Darken a little so white header text stays readable on bright icons.
+        return Color(.sRGB, red: r / w * 0.82, green: g / w * 0.82, blue: b / w * 0.82)
+    }
+
+    /// White or near-black, whichever reads better on the header colour.
+    static func ink(on c: Color) -> Color {
+        let ns = NSColor(c).usingColorSpace(.sRGB) ?? .gray
+        func lin(_ v: CGFloat) -> Double { let d = Double(v); return d <= 0.03928 ? d / 12.92 : pow((d + 0.055) / 1.055, 2.4) }
+        let L = 0.2126 * lin(ns.redComponent) + 0.7152 * lin(ns.greenComponent) + 0.0722 * lin(ns.blueComponent)
+        let white = 1.05 / (L + 0.05), black = (L + 0.05) / 0.0575
+        return white >= black ? .white : Color(red: 0.07, green: 0.07, blue: 0.07)
     }
 }
 
