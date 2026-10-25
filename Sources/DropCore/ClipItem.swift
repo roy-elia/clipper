@@ -20,17 +20,22 @@ public struct ClipItem: Codable, Sendable, Equatable, Identifiable {
     public var fileURLs: [String]?
     /// Set when the clip looks like a credential. Such clips are masked, never suggested, hidden from MCP and Spotlight.
     public var sensitive: Bool?
+    /// True when only the language model (not a hard rule) flagged the clip. Those are hidden but never auto-deleted.
+    public var modelFlagged: Bool?
+    /// Last change time, used to settle sync conflicts (newest wins). Nil on clips saved before sync existed.
+    public var modifiedAt: Date?
 
     public init(id: UUID = UUID(), kind: ClipKind, title: String, text: String? = nil, data: Data? = nil,
                 sourceBundleID: String? = nil, checksum: String, createdAt: Date = Date(), pinboard: String? = nil,
-                extras: [String: Data]? = nil, fileURLs: [String]? = nil, sensitive: Bool? = nil) {
+                extras: [String: Data]? = nil, fileURLs: [String]? = nil, sensitive: Bool? = nil, modifiedAt: Date? = nil) {
         self.id = id; self.kind = kind; self.title = title; self.text = text; self.data = data
         self.sourceBundleID = sourceBundleID; self.checksum = checksum; self.createdAt = createdAt
-        self.pinboard = pinboard; self.extras = extras; self.fileURLs = fileURLs; self.sensitive = sensitive
+        self.pinboard = pinboard; self.extras = extras; self.fileURLs = fileURLs; self.sensitive = sensitive; self.modifiedAt = modifiedAt
     }
 }
 
 public extension ClipItem {
+    var changedAt: Date { modifiedAt ?? createdAt }
     /// What a plain-text paste inserts: no formatting, files become their paths.
     var plainText: String? { text }
     var isSecret: Bool { sensitive == true }

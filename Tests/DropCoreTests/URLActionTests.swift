@@ -9,6 +9,7 @@ import Foundation
         #expect(parse("clipper://stack") == .stack)
         #expect(parse("clipper://new") == .new)
         #expect(parse("clipper://settings") == .settings)
+        #expect(parse("clipper://collect") == .collect && parse("clipper://pause") == .pause && parse("clipper://about") == .about)
     }
     @Test func searchCarriesQuery() {
         #expect(parse("clipper://search?q=hello%20world") == .search("hello world"))

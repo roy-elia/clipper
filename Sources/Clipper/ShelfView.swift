@@ -21,6 +21,7 @@ final class ShelfModel: ObservableObject {
     let store: HistoryStore
     var onPick: ((ClipItem, Bool) -> Void)?   // item, plain text only
     var onClose: (() -> Void)?
+    var onShare: ((ClipItem) -> Void)?
     var onPreview: ((ClipItem) -> Void)?
     var onSettingsChanged: (() -> Void)?
 
@@ -164,6 +165,7 @@ struct ShelfView: View {
         Button("Paste as Plain Text") { model.onPick?(item, true) }
         Button("Preview") { model.onPreview?(item) }
         Button("Add to Paste Stack") { model.stack.push(item) }
+        if !item.isSecret { Button("Share…") { model.onShare?(item) } }
         if item.isSecret { Button("Not a Secret") { model.store.markSecret(item.id, false); model.refresh() } }
         else if item.kind == .text { Button("Mark as Secret") { model.store.markSecret(item.id); model.refresh() } }
         Menu("Pin to") {

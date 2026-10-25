@@ -1,8 +1,8 @@
 import Foundation
 
-/// clipper://show, clipper://search?q=text, clipper://stack, clipper://new
+/// clipper://show, search?q=, stack, new, settings, collect, pause, about
 public enum URLAction: Equatable {
-    case show, stack, new, settings
+    case show, stack, new, settings, collect, pause, about
     case search(String)
 
     public static func parse(_ url: URL) -> URLAction? {
@@ -12,6 +12,9 @@ public enum URLAction: Equatable {
         case "stack": return .stack
         case "new": return .new
         case "settings": return .settings
+        case "collect": return .collect
+        case "pause": return .pause
+        case "about": return .about
         case "search":
             let q = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value ?? ""
             return .search(q)

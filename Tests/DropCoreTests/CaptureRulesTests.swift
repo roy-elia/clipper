@@ -76,3 +76,12 @@ import Foundation
         #expect(st.apps() == ["b", "a", "c"])
     }
 }
+
+
+@Suite struct CustomIgnoreTests {
+    @Test func userAddedAppsAreIgnoredAndRemovedOnesAreNot() {
+        let rules = CaptureRules(ignoredBundleIDs: ["com.example.bank"])
+        #expect(!rules.shouldCapture(.init(types: [], string: "balance", sourceBundleID: "com.example.bank")))
+        #expect(rules.shouldCapture(.init(types: [], string: "balance", sourceBundleID: "com.apple.Passwords")))   // list replaced, not merged
+    }
+}

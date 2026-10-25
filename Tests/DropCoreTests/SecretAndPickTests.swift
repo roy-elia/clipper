@@ -31,6 +31,14 @@ import Foundation
         #expect(!SecretDetector.isAmbiguous("plainword"))
     }
 
+    @Test func hyphenatedIdentifiersAreNotSentToTheModel() {
+        #expect(!SecretDetector.isAmbiguous("ALLOWED-1792965659"))
+        #expect(!SecretDetector.isAmbiguous("live-mcp-visible-1792965701"))
+        #expect(!SecretDetector.isAmbiguous("release-notes-draft_2"))
+        #expect(SecretDetector.isAmbiguous("Tr0ub4dor&3"))
+        #expect(SecretDetector.isAmbiguous("x7Qp-9Lm2-Vw4n"))     // random segments still count as ambiguous
+    }
+
     @Test func captureMarksSecretsOnTextAndLinksOnly() throws {
         let rules = CaptureRules()
         let secret = try #require(rules.makeItem(from: .init(types: [], string: "ghp_16C7e42F292c6912E7710c838347Ae178B4a")))
@@ -111,6 +119,15 @@ import Foundation
         st.add(rules.makeItem(from: .init(types: [], string: "ordinary old note"), now: now.addingTimeInterval(-600))!)
         #expect(st.purgeSecrets(olderThan: 300, now: now) == 1)
         #expect(st.item(old.id) == nil && st.item(pinned.id) != nil && st.all.count == 3)
+    }
+
+    @Test func modelFlaggedClipsAreHiddenButNeverAutoDeleted() {
+        let st = HistoryStore(); let now = Date()
+        let i = st.add(CaptureRules().makeItem(from: .init(types: [], string: "Tr0ub4dor&3"), now: now.addingTimeInterval(-3600))!)
+        st.markSecret(i.id, byModel: true)
+        #expect(st.item(i.id)?.isSecret == true)
+        #expect(st.purgeSecrets(olderThan: 300, now: now) == 0 && st.item(i.id) != nil)
+        st.markSecret(i.id, false); #expect(st.item(i.id)?.modelFlagged == nil)
     }
 
     @Test func markSecretFlipsFlag() {

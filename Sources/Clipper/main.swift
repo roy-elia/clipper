@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import SwiftUI
 import DropCore
 
@@ -19,6 +20,20 @@ final class App: NSObject, NSApplicationDelegate {
     lazy var mcpToken = MCPServer.loadToken(at: App.tokenURL)
     var statusItem: NSStatusItem?
     let hotkeys = HotkeyCenter()
+    let stackHotkeys = HotkeyCenter(id: 2)
+    let sounds = SoundFeedback()
+    let osd = OSD()
+    var collecting = false
+    var collectItem: NSMenuItem?
+    var pauseItem: NSMenuItem?
+    var onboardingWindow: NSWindow?
+    var whatsNewWindow: NSWindow?
+    var aboutWindow: NSWindow?
+    static let syncStateURL = support.appendingPathComponent("sync-state.json")
+    var syncState = SyncState()
+    var syncing = false
+    static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev" }
+    static var build: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev" }
 
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -28,9 +43,12 @@ final class App: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "New Clip…", action: #selector(showNewClip), keyEquivalent: "n").target = self
         menu.addItem(withTitle: "Paste Stack…", action: #selector(showStack), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
+        collectItem = menu.addItem(withTitle: "Collect Copies to Stack", action: #selector(toggleCollect(_:)), keyEquivalent: "")
+        collectItem?.target = self
         let pause = menu.addItem(withTitle: "Pause Capture", action: #selector(togglePause(_:)), keyEquivalent: "")
-        pause.target = self
+        pause.target = self; pauseItem = pause
         menu.addItem(.separator())
+        menu.addItem(withTitle: "About Clipper", action: #selector(showAbout), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem?.menu = menu
         monitor.onChange = { [weak self] in self?.model.refresh() }
@@ -45,7 +63,12 @@ final class App: NSObject, NSApplicationDelegate {
                 NSLog("Clipper: could not register \(model.settings.hotkey.display)")
             }
             monitor.secretPolicy = model.settings.secretPolicy
+            monitor.rules = CaptureRules(ignoredBundleIDs: Set(model.settings.ignoredBundleIDs))
+            sounds.enabled = model.settings.playSounds
+            if stackHotkeys.registered != model.settings.stackHotkey { stackHotkeys.register(model.settings.stackHotkey) }
+            applyPrivacy()
             applySpotlight()
+            if model.settings.iCloudSync { syncNow() }
         }
         applyMCP()
         store.capacity = model.settings.historyCapacity
@@ -57,6 +80,12 @@ final class App: NSObject, NSApplicationDelegate {
         monitor.onChange = { [weak self] in
             guard let self else { return }
             askModelAboutLatest()
+            if let latest = store.all.first {
+                sounds.play(.copy)
+                if latest.isSecret { osd.show("Secret copied. Hidden.", symbol: "lock.fill", hideFromSharing: model.settings.hideFromSharing) }
+                else if collecting { model.stack.push(latest); osd.show("Added to stack (\(model.stack.items.count))", symbol: "square.stack.3d.up", hideFromSharing: model.settings.hideFromSharing) }
+            }
+            if model.settings.iCloudSync { syncNow() }
             model.refresh()
             if model.settings.spotlightEnabled { applySpotlight() }
         }
@@ -64,6 +93,14 @@ final class App: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { self?.purgeSecrets() }
         }
         installPanelShortcuts()
+        monitor.rules = CaptureRules(ignoredBundleIDs: Set(model.settings.ignoredBundleIDs))
+        sounds.enabled = model.settings.playSounds
+        stackHotkeys.onFire = { [weak self] in self?.pasteNext() }
+        stackHotkeys.register(model.settings.stackHotkey)
+        model.onShare = { [weak self] item in self?.share(item) }
+        syncState = (try? Data(contentsOf: App.syncStateURL)).flatMap { try? JSONDecoder().decode(SyncState.self, from: $0) } ?? SyncState()
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.syncNow() } }
+        DispatchQueue.main.async { [weak self] in self?.showFirstRunWindows() }
         monitor.start()
         applySpotlight()
         PasteInjector.diag("launch: pid \(ProcessInfo.processInfo.processIdentifier) trusted=\(PasteInjector.trusted) postEventAccess=\(CGPreflightPostEventAccess())")
@@ -92,7 +129,8 @@ final class App: NSObject, NSApplicationDelegate {
 
     /// Pops the oldest stacked clip and pastes it; the stack window never takes focus from the target app.
     func pasteNext() {
-        guard let item = model.stack.pop() else { return }
+        guard let item = model.stack.pop() else { osd.show("Stack is empty", symbol: "square.stack.3d.up", hideFromSharing: model.settings.hideFromSharing); return }
+        osd.show("Pasting \(item.title.prefix(24))  ·  \(model.stack.items.count) left", symbol: "square.stack.3d.up", hideFromSharing: model.settings.hideFromSharing)
         pick(item, plain: false)
     }
 
@@ -102,7 +140,11 @@ final class App: NSObject, NSApplicationDelegate {
                                styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false)
             p.isFloatingPanel = true; p.title = "Preview"; previewPanel = p
         }
-        previewPanel?.contentView = NSHostingView(rootView: PreviewView(item: item))
+        previewPanel?.contentView = NSHostingView(rootView: PreviewView(item: item, onSave: { [weak self] text in
+            guard let self else { return }
+            if let updated = store.updateText(item.id, to: text) { model.refresh(); preview(updated) }
+        }))
+        applyPrivacy()
         previewPanel?.center(); previewPanel?.makeKeyAndOrderFront(nil)
     }
 
@@ -130,7 +172,7 @@ final class App: NSObject, NSApplicationDelegate {
               SecretDetector.isAmbiguous(text) else { return }
         Task { @MainActor in
             if await SmartClassifier.looksSecret(text) == true {
-                store.markSecret(item.id); PasteInjector.diag("model: marked a clip as secret"); model.refresh()
+                store.markSecret(item.id, byModel: true); PasteInjector.diag("model: marked a clip as secret"); model.refresh()
             }
         }
     }
@@ -138,6 +180,64 @@ final class App: NSObject, NSApplicationDelegate {
     func purgeSecrets() {
         guard model.settings.secretPolicy == .expire else { return }
         if store.purgeSecrets(olderThan: TimeInterval(model.settings.secretMinutes * 60)) > 0 { model.refresh() }
+    }
+
+    /// Keeps Clipper's windows out of screen sharing, recordings and screenshots taken by other apps.
+    func applyPrivacy() {
+        let type: NSWindow.SharingType = model.settings.hideFromSharing ? .none : .readOnly
+        for w in [panel, previewPanel, stackWindow, settingsWindow, newClipWindow] { w?.sharingType = type }
+    }
+
+    @objc func toggleCollect(_ s: NSMenuItem) {
+        collecting.toggle(); s.state = collecting ? .on : .off
+        osd.show(collecting ? "Collecting copies into the stack" : "Stopped collecting", symbol: "square.stack.3d.up", hideFromSharing: model.settings.hideFromSharing)
+    }
+
+    func share(_ item: ClipItem) {
+        var things: [Any] = []
+        if let urls = item.fileURLs, !urls.isEmpty { things = urls.compactMap { URL(string: $0) } }
+        else if let d = item.data, let img = NSImage(data: d) { things = [img] }
+        else if let t = item.text { things = [t] }
+        guard !things.isEmpty, !item.isSecret, let view = panel?.contentView else { return }
+        NSSharingServicePicker(items: things).show(relativeTo: NSRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1), of: view, preferredEdge: .minY)
+    }
+
+    func syncNow() {
+        guard model.settings.iCloudSync, CloudKitTransport.available, !syncing else { return }
+        syncing = true
+        let transport = CloudKitTransport(); let store = store; var state = syncState
+        Task.detached {
+            do { let r = try await SyncCoordinator.sync(store, state: &state, transport: transport); PasteInjector.diag("sync: pushed \(r.pushed) pulled \(r.pulled)") }
+            catch { PasteInjector.diag("sync failed: \(error.localizedDescription)") }
+            let done = state
+            await MainActor.run {
+                self.syncState = done; self.syncing = false
+                if let d = try? JSONEncoder().encode(done) { try? d.write(to: App.syncStateURL, options: .atomic) }
+                self.model.refresh()
+            }
+        }
+    }
+
+    func showFirstRunWindows() {
+        if !model.settings.onboarded {
+            onboardingWindow = window("Welcome", OnboardingView(hotkey: model.settings.hotkey, onGrant: { [weak self] in self?.grant() }, onFinish: { [weak self] in
+                guard let self else { return }
+                model.updateSettings { $0.onboarded = true; $0.lastSeenVersion = App.version }
+                onboardingWindow?.close(); onboardingWindow = nil
+            }), id: "onboarding")
+            NSApp.activate(); onboardingWindow?.makeKeyAndOrderFront(nil)
+        } else if model.settings.lastSeenVersion != App.version {
+            whatsNewWindow = window("What's New", WhatsNewView(version: App.version, onClose: { [weak self] in
+                self?.whatsNewWindow?.close(); self?.whatsNewWindow = nil
+            }), id: "whatsnew")
+            model.updateSettings { $0.lastSeenVersion = App.version }
+            NSApp.activate(); whatsNewWindow?.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    @objc func showAbout() {
+        if aboutWindow == nil { aboutWindow = window("About Clipper", AboutView(version: App.version, build: App.build), id: "about") }
+        NSApp.activate(); aboutWindow?.makeKeyAndOrderFront(nil)
     }
 
     var newClipWindow: NSWindow?
@@ -167,6 +267,9 @@ final class App: NSObject, NSApplicationDelegate {
         case .stack?: showStack()
         case .new?: showNewClip()
         case .settings?: showSettings()
+        case .collect?: if let m = collectItem { toggleCollect(m) }
+        case .pause?: togglePause(pauseItem ?? NSMenuItem())
+        case .about?: showAbout()
         case .search(let q)?: model.query = q; if panel?.isVisible != true { toggle() }
         case nil: break
         }
@@ -184,6 +287,7 @@ final class App: NSObject, NSApplicationDelegate {
             model.log.record(.init(itemID: item.id, kind: item.kind, targetApp: target)); model.log.save(App.logURL)
         }
         monitor.write(item, plain: plain)
+        sounds.play(.paste)
         panel?.orderOut(nil)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "none"
@@ -205,6 +309,7 @@ final class App: NSObject, NSApplicationDelegate {
 
     @objc func togglePause(_ s: NSMenuItem) {
         monitor.paused.toggle(); s.title = monitor.paused ? "Resume Capture" : "Pause Capture"
+        osd.show(monitor.paused ? "Capture paused" : "Capture resumed", symbol: monitor.paused ? "pause.circle" : "play.circle", hideFromSharing: model.settings.hideFromSharing)
     }
 
     @objc func toggle() {
@@ -216,6 +321,7 @@ final class App: NSObject, NSApplicationDelegate {
             let host = NSHostingView(rootView: ShelfView(model: model))
             p.contentView = host
             panel = p
+            applyPrivacy()
         }
         if let s = NSScreen.main, let p = panel {
             p.setFrameOrigin(NSPoint(x: s.visibleFrame.midX - 380, y: s.visibleFrame.minY + 24))
@@ -312,6 +418,19 @@ final class ShelfPanel: NSPanel {
             print("INFO model verdict for \(sample):", verdict.map { $0 ? "secret" : "ordinary" } ?? "no answer")
         }
     }
+    // sounds: the synthesized WAV is valid and plays when enabled
+    let wav = SoundFeedback.wav(freqs: [660, 880])
+    check("sound is a well-formed WAV", wav.prefix(4) == Data("RIFF".utf8) && wav.count > 44 && (try? AVAudioPlayer(data: wav)) != nil)
+    let snd = SoundFeedback(); check("sounds silent when disabled", !snd.play(.copy)); snd.enabled = true
+    check("sounds play when enabled", snd.play(.paste))
+    // OSD and screen-share privacy
+    let osd = OSD(); osd.show("Selftest", symbol: "checkmark"); check("OSD shows", osd.isShowing && osd.lastText == "Selftest")
+    let probe = NSPanel(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: false)
+    probe.sharingType = .none; check("window can be hidden from sharing", probe.sharingType == .none)
+    let h1 = HotkeyCenter(id: 1), h2 = HotkeyCenter(id: 2)
+    check("two hotkeys register side by side", h1.register(Hotkey(keyCode: 9, modifiers: Hotkey.cmd | Hotkey.option | Hotkey.control)) && h2.register(Hotkey(keyCode: 8, modifiers: Hotkey.cmd | Hotkey.option | Hotkey.control)))
+    h1.unregister(); h2.unregister()
+    print("INFO iCloud container entitlement present:", CloudKitTransport.available)
     let hc = HotkeyCenter()
     check("hotkey registers", hc.register(Hotkey(keyCode: 9, modifiers: Hotkey.cmd | Hotkey.option | Hotkey.control)))
     check("bad hotkey rejected", !hc.register(Hotkey(keyCode: 9, modifiers: Hotkey.shift)))

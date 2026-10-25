@@ -28,7 +28,16 @@ public enum SecretDetector {
     /// Short, space-free, mixed-class strings that could be a password but might just be an identifier.
     public static func isAmbiguous(_ text: String) -> Bool {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return classify(t) == nil && isSingleToken(t) && (8...64).contains(t.count) && classes(t) >= 3
+        return classify(t) == nil && isSingleToken(t) && (8...64).contains(t.count) && classes(t) >= 3 && !looksLikeWords(t)
+    }
+
+    /// "release-notes-draft-2" or "ALLOWED-1792965659": separators between mostly real-looking words and numbers
+    /// are identifiers, not passwords, so the model is not asked about them.
+    static func looksLikeWords(_ t: String) -> Bool {
+        let segs = t.split(whereSeparator: { "-_. /".contains($0) })
+        guard segs.count >= 2 else { return false }
+        let wordy = segs.filter { $0.count >= 3 && $0.allSatisfy(\.isLetter) || $0.allSatisfy(\.isNumber) }.count
+        return Double(wordy) / Double(segs.count) >= 0.6
     }
 
     static func isSingleToken(_ t: String) -> Bool { !t.contains(where: \.isWhitespace) && !t.hasPrefix("http") && !t.hasPrefix("/") }

@@ -19,6 +19,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var secretMinutes: Int = 5
     public var opensOnPicks: Bool = true
     public var smartModel: Bool = true
+    public var hideFromSharing: Bool = true
+    public var stackHotkey: Hotkey = Hotkey(keyCode: 9, modifiers: Hotkey.cmd | Hotkey.control)
+    public var onboarded: Bool = false
+    public var lastSeenVersion: String?
+    public var iCloudSync: Bool = false
 
     public init() {}
 
@@ -37,6 +42,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
         secretMinutes = try c.decodeIfPresent(Int.self, forKey: .secretMinutes) ?? def.secretMinutes
         opensOnPicks = try c.decodeIfPresent(Bool.self, forKey: .opensOnPicks) ?? def.opensOnPicks
         smartModel = try c.decodeIfPresent(Bool.self, forKey: .smartModel) ?? def.smartModel
+        hideFromSharing = try c.decodeIfPresent(Bool.self, forKey: .hideFromSharing) ?? def.hideFromSharing
+        stackHotkey = try c.decodeIfPresent(Hotkey.self, forKey: .stackHotkey) ?? def.stackHotkey
+        onboarded = try c.decodeIfPresent(Bool.self, forKey: .onboarded) ?? def.onboarded
+        lastSeenVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenVersion)
+        iCloudSync = try c.decodeIfPresent(Bool.self, forKey: .iCloudSync) ?? def.iCloudSync
     }
 
     public static let capacityRange = 50...10_000
