@@ -70,10 +70,10 @@ struct StackView: View {
                     ForEach(Array(model.stack.items.enumerated()), id: \.element.id) { i, it in
                         HStack {
                             Text("\(i + 1)").font(.caption.monospacedDigit()).foregroundStyle(.secondary).frame(width: 20)
-                            Text(it.title).lineLimit(1)
+                            Text(it.isSecret ? "Secret (hidden)" : it.title).lineLimit(1)
                             Spacer()
                             Button { model.stack.remove(it.id) } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.plain)
-                                .accessibilityLabel("Remove \(it.title)")
+                                .accessibilityLabel("Remove \(it.isSecret ? "secret clip" : it.title)")
                         }
                     }
                 }.listStyle(.plain)

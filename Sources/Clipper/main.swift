@@ -130,7 +130,7 @@ final class App: NSObject, NSApplicationDelegate {
     /// Pops the oldest stacked clip and pastes it; the stack window never takes focus from the target app.
     func pasteNext() {
         guard let item = model.stack.pop() else { osd.show("Stack is empty", symbol: "square.stack.3d.up", hideFromSharing: model.settings.hideFromSharing); return }
-        osd.show("Pasting \(item.title.prefix(24))  ·  \(model.stack.items.count) left", symbol: "square.stack.3d.up", hideFromSharing: model.settings.hideFromSharing)
+        osd.show("Pasting \(item.isSecret ? "a secret" : String(item.title.prefix(24)))  ·  \(model.stack.items.count) left", symbol: "square.stack.3d.up", hideFromSharing: model.settings.hideFromSharing)
         pick(item, plain: false)
     }
 
