@@ -46,7 +46,7 @@ struct PreviewView: View {
             }
         }
         .padding(16).frame(width: 440, height: 320)
-        .accessibilityIdentifier("preview.root")
+        .clipperStyle().accessibilityIdentifier("preview.root")
     }
 }
 
@@ -79,7 +79,7 @@ struct StackView: View {
                 }.listStyle(.plain)
             }
         }
-        .padding(16).frame(width: 360, height: 300)
+        .padding(16).frame(width: 360, height: 300).clipperStyle()
     }
 }
 
@@ -168,7 +168,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .formStyle(.grouped).frame(width: 460, height: 720)
+        .formStyle(.grouped).frame(width: 460, height: 720).clipperStyle()
     }
 }
 

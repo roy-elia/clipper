@@ -113,7 +113,7 @@ struct OnboardingView: View {
                     .keyboardShortcut(.defaultAction).accessibilityIdentifier("onboarding.next")
             }
         }
-        .padding(24).frame(width: 440, height: 260)
+        .padding(24).frame(width: 440, height: 260).clipperStyle()
         .onReceive(timer) { _ in trusted = PasteInjector.trusted }
     }
 }
@@ -133,7 +133,7 @@ struct WhatsNewView: View {
             }
             Spacer()
             HStack { Spacer(); Button("OK", action: onClose).keyboardShortcut(.defaultAction) }
-        }.padding(24).frame(width: 440, height: 280)
+        }.padding(24).frame(width: 440, height: 280).clipperStyle()
     }
 }
 
@@ -142,7 +142,7 @@ struct AboutView: View {
     let build: String
     var body: some View {
         VStack(spacing: 8) {
-            Image(systemName: "paperclip").font(.system(size: 44)).foregroundStyle(.tint)
+            Image(systemName: "paperclip").font(.system(size: 44)).foregroundStyle(Palette.brandInk)
             Text("Clipper").font(.title2.weight(.semibold))
             Text("Version \(version) (\(build))").font(.callout).foregroundStyle(.secondary)
             Text("A personal clipboard manager.").font(.callout)

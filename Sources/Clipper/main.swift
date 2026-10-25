@@ -4,7 +4,7 @@ import SwiftUI
 import DropCore
 
 @MainActor
-final class App: NSObject, NSApplicationDelegate {
+final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Clipper")
     static let settingsURL = support.appendingPathComponent("settings.json")
     let store = HistoryStore(url: App.support.appendingPathComponent("history.json"))
@@ -26,6 +26,8 @@ final class App: NSObject, NSApplicationDelegate {
     var collecting = false
     var collectItem: NSMenuItem?
     var pauseItem: NSMenuItem?
+    var statusLine: NSMenuItem?
+    var grantItem: NSMenuItem?
     var onboardingWindow: NSWindow?
     var whatsNewWindow: NSWindow?
     var aboutWindow: NSWindow?
@@ -39,6 +41,8 @@ final class App: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem?.button?.image = NSImage(systemSymbolName: "paperclip", accessibilityDescription: "Clipper")
         let menu = NSMenu()
+        statusLine = menu.addItem(withTitle: "Capturing", action: nil, keyEquivalent: ""); statusLine?.isEnabled = false
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Show Clipper", action: #selector(toggle), keyEquivalent: "").target = self
         menu.addItem(withTitle: "New Clip…", action: #selector(showNewClip), keyEquivalent: "n").target = self
         menu.addItem(withTitle: "Paste Stack…", action: #selector(showStack), keyEquivalent: "").target = self
@@ -47,7 +51,11 @@ final class App: NSObject, NSApplicationDelegate {
         collectItem?.target = self
         let pause = menu.addItem(withTitle: "Pause Capture", action: #selector(togglePause(_:)), keyEquivalent: "")
         pause.target = self; pauseItem = pause
+        grantItem = menu.addItem(withTitle: "Allow Pasting (Accessibility)…", action: #selector(grant), keyEquivalent: "")
+        grantItem?.target = self
+        menu.delegate = self
         menu.addItem(.separator())
+        menu.addItem(withTitle: "Getting Started…", action: #selector(showGettingStarted), keyEquivalent: "").target = self
         menu.addItem(withTitle: "About Clipper", action: #selector(showAbout), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem?.menu = menu
@@ -76,7 +84,6 @@ final class App: NSObject, NSApplicationDelegate {
         monitor.secretPolicy = model.settings.secretPolicy
         hotkeys.onFire = { [weak self] in self?.toggle() }
         if !hotkeys.register(model.settings.hotkey) { NSLog("Clipper: could not register \(model.settings.hotkey.display)") }
-        menu.addItem(withTitle: "Paste Needs Accessibility…", action: #selector(grant), keyEquivalent: "").target = self
         monitor.onChange = { [weak self] in
             guard let self else { return }
             askModelAboutLatest()
@@ -220,12 +227,7 @@ final class App: NSObject, NSApplicationDelegate {
 
     func showFirstRunWindows() {
         if !model.settings.onboarded {
-            onboardingWindow = window("Welcome", OnboardingView(hotkey: model.settings.hotkey, onGrant: { [weak self] in self?.grant() }, onFinish: { [weak self] in
-                guard let self else { return }
-                model.updateSettings { $0.onboarded = true; $0.lastSeenVersion = App.version }
-                onboardingWindow?.close(); onboardingWindow = nil
-            }), id: "onboarding")
-            NSApp.activate(); onboardingWindow?.makeKeyAndOrderFront(nil)
+            presentOnboarding()
         } else if model.settings.lastSeenVersion != App.version {
             whatsNewWindow = window("What's New", WhatsNewView(version: App.version, onClose: { [weak self] in
                 self?.whatsNewWindow?.close(); self?.whatsNewWindow = nil
@@ -233,6 +235,24 @@ final class App: NSObject, NSApplicationDelegate {
             model.updateSettings { $0.lastSeenVersion = App.version }
             NSApp.activate(); whatsNewWindow?.makeKeyAndOrderFront(nil)
         }
+    }
+
+    func presentOnboarding() {
+        do {
+            onboardingWindow = window("Welcome", OnboardingView(hotkey: model.settings.hotkey, onGrant: { [weak self] in self?.grant() }, onFinish: { [weak self] in
+                guard let self else { return }
+                model.updateSettings { $0.onboarded = true; $0.lastSeenVersion = App.version }
+                onboardingWindow?.close(); onboardingWindow = nil
+            }), id: "onboarding")
+            NSApp.activate(); onboardingWindow?.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    /// The permission item only shows while pasting is not allowed yet.
+    func menuNeedsUpdate(_ menu: NSMenu) { grantItem?.isHidden = PasteInjector.trusted }
+
+    @objc func showGettingStarted() {
+        presentOnboarding()
     }
 
     @objc func showAbout() {
@@ -309,6 +329,7 @@ final class App: NSObject, NSApplicationDelegate {
 
     @objc func togglePause(_ s: NSMenuItem) {
         monitor.paused.toggle(); s.title = monitor.paused ? "Resume Capture" : "Pause Capture"
+        statusLine?.title = monitor.paused ? "Paused" : "Capturing"
         osd.show(monitor.paused ? "Capture paused" : "Capture resumed", symbol: monitor.paused ? "pause.circle" : "play.circle", hideFromSharing: model.settings.hideFromSharing)
     }
 

@@ -52,7 +52,7 @@ struct NewClipView: View {
                     .keyboardShortcut(.defaultAction).disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("newclip.save")
             }
-        }.padding(16).frame(width: 420, height: 280)
+        }.padding(16).frame(width: 420, height: 280).clipperStyle()
     }
 }
 

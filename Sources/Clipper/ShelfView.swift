@@ -114,7 +114,7 @@ struct ShelfView: View {
                             }
                         }.padding(.vertical, 4)
                     }.frame(height: 142)
-                    .onChange(of: model.selection) { if let i = model.selected { withAnimation(.snappy(duration: 0.15)) { proxy.scrollTo(i.id) } } }
+                    .onChange(of: model.selection) { if let i = model.selected { if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { proxy.scrollTo(i.id) } else { withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { proxy.scrollTo(i.id) } } } }
                 }
             }
         }
@@ -123,6 +123,7 @@ struct ShelfView: View {
         .onAppear { searchFocused = true }
         .onChange(of: model.focusTick) { searchFocused = true }
         .frame(width: 760, height: 252)
+        .clipperStyle()
         .background { ShelfBackdrop() }
         .onChange(of: model.query) { model.refresh() }
         .onChange(of: model.kind) { model.refresh() }
@@ -178,24 +179,22 @@ struct ShelfView: View {
 
     var picksTab: some View {
         Button { model.picks = true; model.board = nil; model.refresh() } label: { Label("Picks", systemImage: "sparkles") }
-            .buttonStyle(.plain).foregroundStyle(.primary).font(.callout.weight(model.picks ? .semibold : .regular))
-            .padding(.horizontal, 12).padding(.vertical, 5)
-            .background(model.picks ? AnyShapeStyle(.tint.opacity(0.35)) : AnyShapeStyle(.quaternary), in: Capsule())
+            .buttonStyle(.plain).font(.callout.weight(model.picks ? .semibold : .regular))
+            .capsuleChip(selected: model.picks)
             .accessibilityIdentifier("shelf.tab.Picks")
     }
 
     func tab(_ title: String, _ b: String?) -> some View {
         Button(title) { model.picks = false; model.board = b; model.refresh() }
-            .buttonStyle(.plain).foregroundStyle(.primary).font(.callout.weight(!model.picks && model.board == b ? .semibold : .regular))
-            .padding(.horizontal, 12).padding(.vertical, 5)
-            .background(!model.picks && model.board == b ? AnyShapeStyle(.tint.opacity(0.35)) : AnyShapeStyle(.quaternary), in: Capsule())
+            .buttonStyle(.plain).font(.callout.weight(!model.picks && model.board == b ? .semibold : .regular))
+            .capsuleChip(selected: !model.picks && model.board == b)
             .accessibilityIdentifier("shelf.tab.\(title)")
     }
 
     func chip(_ title: String, _ k: ClipKind?) -> some View {
         Button(title) { model.kind = k }
-            .buttonStyle(.plain).foregroundStyle(.primary).font(.callout).padding(.horizontal, 10).padding(.vertical, 5)
-            .background(model.kind == k ? AnyShapeStyle(.tint.opacity(0.35)) : AnyShapeStyle(.quaternary), in: Capsule())
+            .buttonStyle(.plain).font(.callout)
+            .capsuleChip(selected: model.kind == k, hPad: 10)
             .accessibilityIdentifier("shelf.chip.\(title)")
     }
 }
@@ -225,7 +224,7 @@ struct Card: View {
         }
         .padding(10).frame(width: 150, height: 130, alignment: .topLeading)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay { if selected { RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.tint.opacity(0.22)) } }
+        .overlay { if selected { RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Palette.lilac.opacity(0.35)) } }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
