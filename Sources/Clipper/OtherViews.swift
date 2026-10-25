@@ -65,6 +65,7 @@ struct StackView: View {
 struct SettingsView: View {
     @ObservedObject var model: ShelfModel
     var accessibilityTrusted: Bool
+    var mcpToken: String = ""
     var onGrant: () -> Void = {}
     var body: some View {
         Form {
@@ -89,6 +90,20 @@ struct SettingsView: View {
                 Text("Clips from password managers and anything marked concealed are never saved.").font(.callout)
                 LabeledContent("Ignored apps") { Text("\(model.settings.ignoredBundleIDs.count) password managers").foregroundStyle(.secondary) }
             }
+            Section("MCP server") {
+                Toggle("Let AI tools use my clips", isOn: Binding(get: { model.settings.mcpEnabled }, set: { v in model.updateSettings { $0.mcpEnabled = v } }))
+                    .accessibilityIdentifier("settings.mcp")
+                LabeledContent("Address") { Text("http://127.0.0.1:\(String(model.settings.mcpPort))/mcp").font(.caption.monospaced()).textSelection(.enabled) }
+                LabeledContent("Token") {
+                    HStack {
+                        Text(String(repeating: "•", count: 12)).foregroundStyle(.secondary)
+                        Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(mcpToken, forType: .string) }
+                            .disabled(mcpToken.isEmpty).accessibilityIdentifier("settings.copyToken")
+                    }
+                }
+                Text("Only this Mac can connect, and every request needs the token. Use clipper-mcp-stdio for clients that speak stdio.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Permissions") {
                 LabeledContent("Accessibility (paste)") {
                     if accessibilityTrusted { Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(.green) }
@@ -96,6 +111,6 @@ struct SettingsView: View {
                 }
             }
         }
-        .formStyle(.grouped).frame(width: 460, height: 380)
+        .formStyle(.grouped).frame(width: 460, height: 520)
     }
 }

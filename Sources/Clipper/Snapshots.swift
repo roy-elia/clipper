@@ -79,7 +79,7 @@ func runSnapshots(into dir: String) -> Int32 {
         _ = render(ShelfView(model: m), appearance: ap, large: large, to: out("Shelf-Empty")); count += 1
         _ = render(PreviewView(item: item), appearance: ap, large: large, to: out("Preview")); count += 1
         _ = render(StackView(model: m, onPasteNext: {}), appearance: ap, large: large, to: out("Stack")); count += 1
-        _ = render(SettingsView(model: m, accessibilityTrusted: false), appearance: ap, large: large, to: out("Settings")); count += 1
+        _ = render(SettingsView(model: m, accessibilityTrusted: false, mcpToken: "x"), appearance: ap, large: large, to: out("Settings")); count += 1
         print("rendered \(name) shelf \(Int(a.width))x\(Int(a.height)) pt")
     }
     print("SNAPSHOTS \(count) -> \(dir)")

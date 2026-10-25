@@ -48,4 +48,12 @@ import Foundation
         #expect(AppSettings.load(url) == s)
         #expect(AppSettings.load(URL(fileURLWithPath: "/nonexistent/x.json")) == AppSettings())
     }
+
+    @Test func oldSettingsFileStillLoads() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("clipper-old-\(UUID()).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data(#"{"historyCapacity": 300, "playSounds": true}"#.utf8).write(to: url)
+        let s = AppSettings.load(url)
+        #expect(s.historyCapacity == 300 && s.playSounds && !s.mcpEnabled && s.mcpPort == 47821)
+    }
 }

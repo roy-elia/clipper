@@ -13,6 +13,9 @@ final class App: NSObject, NSApplicationDelegate {
     var previewPanel: NSPanel?
     var stackWindow: NSWindow?
     var settingsWindow: NSWindow?
+    var mcp: MCPServer?
+    static let tokenURL = App.support.appendingPathComponent("mcp-token")
+    lazy var mcpToken = MCPServer.loadToken(at: App.tokenURL)
     var statusItem: NSStatusItem?
     let hotkeys = HotkeyCenter()
 
@@ -34,7 +37,9 @@ final class App: NSObject, NSApplicationDelegate {
         model.onSettingsChanged = { [weak self] in
             guard let self else { return }
             model.settings.save(App.settingsURL)
+            applyMCP()
         }
+        applyMCP()
         store.capacity = model.settings.historyCapacity
         hotkeys.onFire = { [weak self] in self?.toggle() }
         if !hotkeys.register(model.settings.hotkey) { NSLog("Clipper: could not register \(model.settings.hotkey.display)") }
@@ -50,7 +55,7 @@ final class App: NSObject, NSApplicationDelegate {
 
     @objc func showSettings() {
         if settingsWindow == nil {
-            settingsWindow = window("Clipper Settings", SettingsView(model: model, accessibilityTrusted: PasteInjector.trusted, onGrant: { [weak self] in self?.grant() }), id: "settings")
+            settingsWindow = window("Clipper Settings", SettingsView(model: model, accessibilityTrusted: PasteInjector.trusted, mcpToken: mcpToken, onGrant: { [weak self] in self?.grant() }), id: "settings")
         }
         NSApp.activate(); settingsWindow?.makeKeyAndOrderFront(nil)
     }
@@ -90,6 +95,16 @@ final class App: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
             if !PasteInjector.pasteNow() { PasteInjector.requestAccess() }
         }
+    }
+
+    /// Starts, restarts or stops the MCP server to match settings.
+    func applyMCP() {
+        let s = model.settings
+        if let m = mcp, !s.mcpEnabled || m.port != s.mcpPort { m.stop(); mcp = nil }
+        guard s.mcpEnabled, mcp == nil else { return }
+        let server = MCPServer(store: store, token: mcpToken, port: s.mcpPort)
+        server.onState = { NSLog("Clipper MCP \($0)") }
+        do { try server.start(); mcp = server } catch { NSLog("Clipper MCP failed to start: \(error)") }
     }
 
     @objc func togglePause(_ s: NSMenuItem) {
@@ -163,6 +178,14 @@ if CommandLine.arguments.contains("--selftest") {
     exit(MainActor.assumeIsolated { selftest() })
 }
 let app = NSApplication.shared
+/// --serve-mcp <port> <tokenfile>: headless server over an in-memory store, for end-to-end tests.
+if let i = CommandLine.arguments.firstIndex(of: "--serve-mcp"), i + 2 < CommandLine.arguments.count,
+   let port = UInt16(CommandLine.arguments[i + 1]) {
+    let server = MCPServer(store: HistoryStore(), token: MCPServer.loadToken(at: URL(fileURLWithPath: CommandLine.arguments[i + 2])), port: port)
+    server.onState = { print("MCP \($0)"); fflush(stdout) }
+    do { try server.start() } catch { print("MCP failed: \(error)"); exit(1) }
+    RunLoop.main.run()
+}
 if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
     exit(MainActor.assumeIsolated { runSnapshots(into: CommandLine.arguments[i + 1]) })
 }

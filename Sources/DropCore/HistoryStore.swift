@@ -37,6 +37,20 @@ public final class HistoryStore: @unchecked Sendable {
         lock.withLock { items.removeAll { $0.id == id }; persist() }
     }
 
+    public func item(_ id: UUID) -> ClipItem? { lock.withLock { items.first { $0.id == id } } }
+
+    /// Edits the text of a text-like clip, recomputing its checksum and title. Returns nil for unknown or image clips.
+    @discardableResult
+    public func updateText(_ id: UUID, to text: String) -> ClipItem? {
+        lock.withLock {
+            guard let i = items.firstIndex(where: { $0.id == id }), items[i].data == nil else { return nil }
+            items[i].text = text
+            items[i].title = text.split(whereSeparator: \.isNewline).first.map { String($0.prefix(120)) } ?? "text"
+            items[i].checksum = CaptureRules.checksum(string: text, data: nil)
+            persist(); return items[i]
+        }
+    }
+
     public func setPinboard(_ name: String?, for id: UUID) {
         lock.withLock {
             if let i = items.firstIndex(where: { $0.id == id }) { items[i].pinboard = name; persist() }
