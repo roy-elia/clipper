@@ -69,7 +69,7 @@ public final class MCPHandler: @unchecked Sendable {
         func fail(_ s: String) -> JSON { text(s, error: true) }
         func id() -> UUID? { (a["id"] as? String).flatMap(UUID.init(uuidString:)) }
         func summary(_ i: ClipItem) -> JSON {
-            var d: JSON = ["id": i.id.uuidString, "kind": i.kind.rawValue, "title": i.title,
+            var d: JSON = ["id": i.id.uuidString, "kind": i.kind.rawValue, "title": i.isSecret ? "[secret withheld]" : i.title,
                            "created_at": ISO8601DateFormatter().string(from: i.createdAt)]
             if let p = i.pinboard { d["pinboard"] = p }
             if let b = i.sourceBundleID { d["source_app"] = b }
@@ -85,11 +85,12 @@ public final class MCPHandler: @unchecked Sendable {
             let kind = (a["kind"] as? String).flatMap(ClipKind.init(rawValue:))
             if a["kind"] != nil && kind == nil { return fail("Unknown kind") }
             let limit = min(max((a["limit"] as? Int) ?? 20, 1), 100)
-            let hits = store.search(a["query"] as? String ?? "", kind: kind, pinboard: a["pinboard"] as? String)
+            // Secrets never leave the app through MCP, not even as search hits.
+            let hits = store.search(a["query"] as? String ?? "", kind: kind, pinboard: a["pinboard"] as? String).filter { !$0.isSecret }
             return json(["count": hits.count, "items": hits.prefix(limit).map(summary)])
         case "read_item":
             guard let i = id().flatMap(store.item) else { return fail("No clip with that id") }
-            var d = summary(i); d["text"] = i.text ?? NSNull(); d["has_binary_data"] = i.data != nil
+            var d = summary(i); if i.isSecret { d["text"] = "[secret withheld]" } else if let t = i.text { d["text"] = t } else { d["text"] = NSNull() }; d["has_binary_data"] = i.data != nil
             return json(d)
         case "create_item":
             guard let t = a["text"] as? String, !t.isEmpty else { return fail("text is required") }

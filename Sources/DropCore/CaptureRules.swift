@@ -76,6 +76,7 @@ public struct CaptureRules: Sendable {
         let kept = s.extras.filter { $0.value.count <= 2_000_000 }
         return ClipItem(kind: k, title: title, text: text, data: s.data, sourceBundleID: s.sourceBundleID,
                         checksum: Self.checksum(string: text, data: s.data), createdAt: now,
-                        extras: kept.isEmpty ? nil : kept, fileURLs: s.fileURLs.isEmpty ? nil : s.fileURLs)
+                        extras: kept.isEmpty ? nil : kept, fileURLs: s.fileURLs.isEmpty ? nil : s.fileURLs,
+                        sensitive: (k == .text || k == .link) && text.map({ SecretDetector.classify($0) != nil }) == true ? true : nil)
     }
 }

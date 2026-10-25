@@ -8,6 +8,7 @@ final class PasteboardMonitor {
     var rules: CaptureRules
     let store: HistoryStore
     var paused = false
+    var secretPolicy: SecretPolicy = .expire
     var onChange: (() -> Void)?
     private var lastCount: Int
     private var timer: Timer?
@@ -42,6 +43,7 @@ final class PasteboardMonitor {
                                       sourceBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
                                       extras: extras, fileURLs: files)
         guard let item = rules.makeItem(from: snap) else { return nil }
+        if item.isSecret && secretPolicy == .skip { return nil }
         let stored = store.add(item)
         onChange?()
         return stored

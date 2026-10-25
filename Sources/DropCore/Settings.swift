@@ -1,5 +1,12 @@
 import Foundation
 
+/// What to do with a clip that looks like a credential.
+public enum SecretPolicy: String, Codable, CaseIterable, Sendable {
+    case mask    // keep it, hidden on the shelf
+    case expire  // keep it hidden, then delete it after a few minutes
+    case skip    // never save it
+}
+
 public struct AppSettings: Codable, Equatable, Sendable {
     public var hotkey: Hotkey = .default
     public var historyCapacity: Int = 1000
@@ -8,6 +15,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var mcpEnabled: Bool = false
     public var mcpPort: UInt16 = 47821
     public var spotlightEnabled: Bool = false
+    public var secretPolicy: SecretPolicy = .expire
+    public var secretMinutes: Int = 5
+    public var opensOnPicks: Bool = true
+    public var smartModel: Bool = true
 
     public init() {}
 
@@ -22,6 +33,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         mcpEnabled = try c.decodeIfPresent(Bool.self, forKey: .mcpEnabled) ?? def.mcpEnabled
         mcpPort = try c.decodeIfPresent(UInt16.self, forKey: .mcpPort) ?? def.mcpPort
         spotlightEnabled = try c.decodeIfPresent(Bool.self, forKey: .spotlightEnabled) ?? def.spotlightEnabled
+        secretPolicy = try c.decodeIfPresent(SecretPolicy.self, forKey: .secretPolicy) ?? def.secretPolicy
+        secretMinutes = try c.decodeIfPresent(Int.self, forKey: .secretMinutes) ?? def.secretMinutes
+        opensOnPicks = try c.decodeIfPresent(Bool.self, forKey: .opensOnPicks) ?? def.opensOnPicks
+        smartModel = try c.decodeIfPresent(Bool.self, forKey: .smartModel) ?? def.smartModel
     }
 
     public static let capacityRange = 50...10_000

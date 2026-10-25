@@ -51,6 +51,21 @@ public final class HistoryStore: @unchecked Sendable {
         }
     }
 
+    public func markSecret(_ id: UUID, _ on: Bool = true) {
+        lock.withLock { if let i = items.firstIndex(where: { $0.id == id }) { items[i].sensitive = on ? true : nil; persist() } }
+    }
+
+    /// Deletes secret clips older than `ttl` seconds unless they are pinned. Returns how many were removed.
+    @discardableResult
+    public func purgeSecrets(olderThan ttl: TimeInterval, now: Date = Date()) -> Int {
+        lock.withLock {
+            let before = items.count
+            items.removeAll { $0.isSecret && $0.pinboard == nil && now.timeIntervalSince($0.createdAt) >= ttl }
+            if items.count != before { persist() }
+            return before - items.count
+        }
+    }
+
     public func setPinboard(_ name: String?, for id: UUID) {
         lock.withLock {
             if let i = items.firstIndex(where: { $0.id == id }) { items[i].pinboard = name; persist() }

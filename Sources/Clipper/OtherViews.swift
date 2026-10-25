@@ -3,6 +3,7 @@ import DropCore
 
 struct PreviewView: View {
     let item: ClipItem
+    @State private var revealed = false
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -12,7 +13,13 @@ struct PreviewView: View {
             }
             Divider()
             Group {
-                if item.kind == .image, let d = item.data, let img = NSImage(data: d) {
+                if item.isSecret && !revealed {
+                    VStack(spacing: 10) {
+                        Image(systemName: "lock.fill").font(.largeTitle).foregroundStyle(.secondary)
+                        Text("This clip looks like a secret and is hidden.").foregroundStyle(.secondary)
+                        Button("Reveal") { revealed = true }.accessibilityIdentifier("preview.reveal")
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if item.kind == .image, let d = item.data, let img = NSImage(data: d) {
                     Image(nsImage: img).resizable().scaledToFit()
                 } else {
                     ScrollView { Text(item.text ?? item.title).font(.body.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
@@ -66,6 +73,7 @@ struct SettingsView: View {
     @ObservedObject var model: ShelfModel
     var accessibilityTrusted: Bool
     var mcpToken: String = ""
+    var modelNote: String = ""
     @State private var loginEnabled = LoginItem.enabled
     var onGrant: () -> Void = {}
     var body: some View {
@@ -97,6 +105,22 @@ struct SettingsView: View {
                 Text("Clips from password managers and anything marked concealed are never saved.").font(.callout)
                 LabeledContent("Ignored apps") { Text("\(model.settings.ignoredBundleIDs.count) password managers").foregroundStyle(.secondary) }
             }
+            Section("Smart features") {
+                Toggle("Open on Picks", isOn: Binding(get: { model.settings.opensOnPicks }, set: { v in model.updateSettings { $0.opensOnPicks = v } }))
+                    .accessibilityIdentifier("settings.picks")
+                Toggle("Ask the on-device model about unclear clips", isOn: Binding(get: { model.settings.smartModel }, set: { v in model.updateSettings { $0.smartModel = v } }))
+                    .accessibilityIdentifier("settings.smartModel")
+                Picker("Clips that look like secrets", selection: Binding(get: { model.settings.secretPolicy }, set: { v in model.updateSettings { $0.secretPolicy = v } })) {
+                    Text("Hide").tag(SecretPolicy.mask)
+                    Text("Hide, then delete").tag(SecretPolicy.expire)
+                    Text("Never save").tag(SecretPolicy.skip)
+                }.accessibilityIdentifier("settings.secretPolicy")
+                if model.settings.secretPolicy == .expire {
+                    Stepper("Delete after \(model.settings.secretMinutes) min", value: Binding(get: { model.settings.secretMinutes }, set: { v in model.updateSettings { $0.secretMinutes = v } }), in: 1...120)
+                }
+                Text("Secrets are never suggested, never shown to MCP clients and never indexed. Detection runs on this Mac.\(modelNote)")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("MCP server") {
                 Toggle("Let AI tools use my clips", isOn: Binding(get: { model.settings.mcpEnabled }, set: { v in model.updateSettings { $0.mcpEnabled = v } }))
                     .accessibilityIdentifier("settings.mcp")
@@ -118,6 +142,6 @@ struct SettingsView: View {
                 }
             }
         }
-        .formStyle(.grouped).frame(width: 460, height: 660)
+        .formStyle(.grouped).frame(width: 460, height: 800)
     }
 }

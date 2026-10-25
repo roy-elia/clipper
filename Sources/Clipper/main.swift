@@ -8,6 +8,7 @@ final class App: NSObject, NSApplicationDelegate {
     static let settingsURL = support.appendingPathComponent("settings.json")
     let store = HistoryStore(url: App.support.appendingPathComponent("history.json"))
     lazy var monitor = PasteboardMonitor(store: store)
+    static let logURL = support.appendingPathComponent("paste-log.json")
     lazy var model = ShelfModel(store: store, settings: AppSettings.load(App.settingsURL))
     var panel: NSPanel?
     var previewPanel: NSPanel?
@@ -43,14 +44,25 @@ final class App: NSObject, NSApplicationDelegate {
             if hotkeys.registered != model.settings.hotkey, !hotkeys.register(model.settings.hotkey) {
                 NSLog("Clipper: could not register \(model.settings.hotkey.display)")
             }
+            monitor.secretPolicy = model.settings.secretPolicy
             applySpotlight()
         }
         applyMCP()
         store.capacity = model.settings.historyCapacity
+        model.log = PasteLog.load(App.logURL)
+        monitor.secretPolicy = model.settings.secretPolicy
         hotkeys.onFire = { [weak self] in self?.toggle() }
         if !hotkeys.register(model.settings.hotkey) { NSLog("Clipper: could not register \(model.settings.hotkey.display)") }
         menu.addItem(withTitle: "Paste Needs Accessibility…", action: #selector(grant), keyEquivalent: "").target = self
-        monitor.onChange = { [weak self] in self?.model.refresh(); if self?.model.settings.spotlightEnabled == true { self?.applySpotlight() } }
+        monitor.onChange = { [weak self] in
+            guard let self else { return }
+            askModelAboutLatest()
+            model.refresh()
+            if model.settings.spotlightEnabled { applySpotlight() }
+        }
+        Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.purgeSecrets() }
+        }
         installPanelShortcuts()
         monitor.start()
         applySpotlight()
@@ -65,7 +77,7 @@ final class App: NSObject, NSApplicationDelegate {
 
     @objc func showSettings() {
         if settingsWindow == nil {
-            settingsWindow = window("Clipper Settings", SettingsView(model: model, accessibilityTrusted: PasteInjector.trusted, mcpToken: mcpToken, onGrant: { [weak self] in self?.grant() }), id: "settings")
+            settingsWindow = window("Clipper Settings", SettingsView(model: model, accessibilityTrusted: PasteInjector.trusted, mcpToken: mcpToken, modelNote: SmartClassifier.isAvailable ? " On-device model: available." : " On-device model: not available on this Mac, rules only.", onGrant: { [weak self] in self?.grant() }), id: "settings")
         }
         NSApp.activate(); settingsWindow?.makeKeyAndOrderFront(nil)
     }
@@ -112,6 +124,22 @@ final class App: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Unclear short tokens go to the on-device model; a "secret" verdict hides the clip like a rule match would.
+    func askModelAboutLatest() {
+        guard model.settings.smartModel, let item = store.all.first, !item.isSecret, let text = item.text,
+              SecretDetector.isAmbiguous(text) else { return }
+        Task { @MainActor in
+            if await SmartClassifier.looksSecret(text) == true {
+                store.markSecret(item.id); PasteInjector.diag("model: marked a clip as secret"); model.refresh()
+            }
+        }
+    }
+
+    func purgeSecrets() {
+        guard model.settings.secretPolicy == .expire else { return }
+        if store.purgeSecrets(olderThan: TimeInterval(model.settings.secretMinutes * 60)) > 0 { model.refresh() }
+    }
+
     var newClipWindow: NSWindow?
     let spotlight = SpotlightIndexer()
 
@@ -151,6 +179,10 @@ final class App: NSObject, NSApplicationDelegate {
     /// Hide the shelf, put the clip on the pasteboard, then ⌘V into whatever app is still frontmost.
     func pick(_ item: ClipItem, plain: Bool = false) {
         PasteInjector.diag("pick: \(item.kind.rawValue) \"\(item.title.prefix(20))\" previousApp=\((panel as? ShelfPanel)?.previousApp?.bundleIdentifier ?? "nil")")
+        if let target = (panel as? ShelfPanel)?.previousApp?.bundleIdentifier ?? NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+           target != Bundle.main.bundleIdentifier {
+            model.log.record(.init(itemID: item.id, kind: item.kind, targetApp: target)); model.log.save(App.logURL)
+        }
         monitor.write(item, plain: plain)
         panel?.orderOut(nil)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
@@ -192,7 +224,10 @@ final class App: NSObject, NSApplicationDelegate {
         if let shelf = panel as? ShelfPanel {
             let front = NSWorkspace.shared.frontmostApplication
             shelf.previousApp = front?.bundleIdentifier == Bundle.main.bundleIdentifier ? nil : front
+            model.targetApp = shelf.previousApp?.bundleIdentifier
         }
+        model.picks = model.settings.opensOnPicks && !PickRanker(log: model.log).rank(store.all, for: model.targetApp, limit: 1).isEmpty
+        model.board = nil; model.selection = 0
         // Key window so type-to-search and the arrow keys work; closing hands focus back to the previous app.
         // Activating Clipper is what routes ⌘ shortcuts to the panel; closing re-activates the previous app.
         model.refresh(); model.focusTick += 1; NSApp.activate(); panel?.makeKeyAndOrderFront(nil)
@@ -263,6 +298,20 @@ final class ShelfPanel: NSPanel {
     m.app = "no.such.app"; m.refresh(); check("app filter narrows", m.items.isEmpty); m.app = nil; m.refresh()
     m.updateSettings { $0.setCapacity(10) }
     check("capacity clamped and applied", store.capacity == 50)
+    // secrets
+    pb.clearContents(); pb.setString("ghp_16C7e42F292c6912E7710c838347Ae178B4a", forType: .string)
+    check("token captured and flagged secret", mon.poll()?.isSecret == true)
+    mon.secretPolicy = .skip; pb.clearContents(); pb.setString("ghp_16C7e42F292c6912E7710c838347Ae178B4b", forType: .string)
+    check("skip policy never saves a secret", mon.poll() == nil); mon.secretPolicy = .expire
+    print("INFO on-device model:", SmartClassifier.availability)
+    if SmartClassifier.isAvailable {
+        for sample in ["Tr0ub4dor&3", "correct-horse-battery-staple-9", "quarterly", "Release-2026.4"] {
+            let sem = DispatchSemaphore(value: 0); var verdict: Bool?
+            Task { @MainActor in verdict = await SmartClassifier.looksSecret(sample); sem.signal() }
+            while sem.wait(timeout: .now()) == .timedOut { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
+            print("INFO model verdict for \(sample):", verdict.map { $0 ? "secret" : "ordinary" } ?? "no answer")
+        }
+    }
     let hc = HotkeyCenter()
     check("hotkey registers", hc.register(Hotkey(keyCode: 9, modifiers: Hotkey.cmd | Hotkey.option | Hotkey.control)))
     check("bad hotkey rejected", !hc.register(Hotkey(keyCode: 9, modifiers: Hotkey.shift)))

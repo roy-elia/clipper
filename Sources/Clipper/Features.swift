@@ -20,7 +20,7 @@ final class SpotlightIndexer {
     func sync(_ items: [ClipItem]) {
         let idx = CSSearchableIndex.default()
         let searchable = items.prefix(500).compactMap { i -> CSSearchableItem? in
-            guard i.kind != .image, let t = i.text else { return nil }
+            guard i.kind != .image, !i.isSecret, let t = i.text else { return nil }
             let a = CSSearchableItemAttributeSet(contentType: .text)
             a.title = i.title; a.textContent = String(t.prefix(2000)); a.contentCreationDate = i.createdAt
             return CSSearchableItem(uniqueIdentifier: i.id.uuidString, domainIdentifier: Self.domain, attributeSet: a)

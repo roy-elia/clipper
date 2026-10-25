@@ -21,6 +21,7 @@ func fixtureModel() -> ShelfModel {
     }
     store.add(CaptureRules().makeItem(from: .init(types: ["public.file-url"], sourceBundleID: "com.apple.finder", fileURLs: ["file:///Users/me/Report%20Q3.pdf", "file:///Users/me/notes.txt"]))!)
     store.add(CaptureRules().makeItem(from: .init(types: ["public.rtf"], string: "Formatted paragraph with bold text", sourceBundleID: "com.apple.TextEdit", extras: ["public.rtf": Data([1])]))!)
+    store.add(CaptureRules().makeItem(from: .init(types: [], string: "ghp_16C7e42F292c6912E7710c838347Ae178B4a", sourceBundleID: "com.apple.Terminal"))!)
     let first = store.all.last!
     store.createPinboard("Work"); store.createPinboard("Ideas")
     store.setPinboard("Work", for: first.id)
@@ -68,14 +69,16 @@ func runSnapshots(into dir: String) -> Int32 {
     NSApplication.shared.setActivationPolicy(.accessory)
     try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     let m = fixtureModel()
-    let item = m.store.all[0]
+    let item = m.store.all.first { $0.isSecret } ?? m.store.all[0]
     let looks: [(String, NSAppearance.Name, Bool)] = [("light", .aqua, false), ("dark", .darkAqua, false), ("dark-large", .darkAqua, true)]
     var count = 0
     for (name, ap, large) in looks {
         func out(_ screen: String) -> URL { URL(fileURLWithPath: dir).appendingPathComponent("\(screen)-\(name).png") }
-        m.board = nil; m.refresh()
+        m.picks = false; m.board = nil; m.refresh()
         let a = render(ShelfView(model: m), appearance: ap, large: large, to: out("Shelf")); count += 1
-        m.board = "Work"; m.refresh()
+        m.picks = true; m.targetApp = "com.apple.Terminal"; m.refresh()
+        _ = render(ShelfView(model: m), appearance: ap, large: large, to: out("Shelf-Picks")); count += 1
+        m.picks = false; m.board = "Work"; m.refresh()
         _ = render(ShelfView(model: m), appearance: ap, large: large, to: out("Shelf-Work")); count += 1
         m.board = "Ideas"; m.refresh()
         _ = render(ShelfView(model: m), appearance: ap, large: large, to: out("Shelf-Empty")); count += 1

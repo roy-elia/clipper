@@ -7,6 +7,9 @@ final class ShelfModel: ObservableObject {
     @Published var kind: ClipKind?
     @Published var board: String?          // nil = History
     @Published var app: String?            // source-app filter
+    @Published var picks = false           // show suggestions for targetApp instead of history
+    @Published var targetApp: String?      // the app a paste would go into
+    var log = PasteLog()
     @Published var apps: [String] = []
     @Published var selection = 0
     @Published var focusTick = 0           // bumped each time the shelf opens so search regains focus
@@ -26,7 +29,14 @@ final class ShelfModel: ObservableObject {
     }
 
     func refresh() {
-        items = store.search(query, kind: kind, pinboard: board, app: app)
+        if picks {
+            let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+            items = PickRanker(log: log).rank(store.all, for: targetApp, limit: 12).filter {
+                (kind == nil || $0.kind == kind) && (q.isEmpty || $0.title.lowercased().contains(q) || ($0.text?.lowercased().contains(q) ?? false))
+            }
+        } else {
+            items = store.search(query, kind: kind, pinboard: board, app: app)
+        }
         boards = store.pinboards(); apps = store.apps()
         selection = items.isEmpty ? 0 : min(selection, items.count - 1)
     }
@@ -54,6 +64,7 @@ struct ShelfView: View {
     var body: some View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
+                picksTab
                 tab("History", nil)
                 ForEach(model.boards, id: \.self) { b in
                     tab(b, b).contextMenu {
@@ -87,7 +98,7 @@ struct ShelfView: View {
                 appMenu
             }
             if model.items.isEmpty {
-                Text(model.board == nil ? "Nothing copied yet" : "Right-click a clip, then Pin to, to add it here")
+                Text(model.picks ? "No suggestions yet" : model.board == nil ? "Nothing copied yet" : "Right-click a clip, then Pin to, to add it here")
                     .foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
@@ -153,6 +164,8 @@ struct ShelfView: View {
         Button("Paste as Plain Text") { model.onPick?(item, true) }
         Button("Preview") { model.onPreview?(item) }
         Button("Add to Paste Stack") { model.stack.push(item) }
+        if item.isSecret { Button("Not a Secret") { model.store.markSecret(item.id, false); model.refresh() } }
+        else if item.kind == .text { Button("Mark as Secret") { model.store.markSecret(item.id); model.refresh() } }
         Menu("Pin to") {
             ForEach(model.boards, id: \.self) { b in Button(b) { model.pin(item, to: b) } }
             if item.pinboard != nil { Divider(); Button("Unpin") { model.pin(item, to: nil) } }
@@ -161,11 +174,19 @@ struct ShelfView: View {
         Button("Delete", role: .destructive) { model.delete(item) }
     }
 
-    func tab(_ title: String, _ b: String?) -> some View {
-        Button(title) { model.board = b }
-            .buttonStyle(.plain).foregroundStyle(.primary).font(.callout.weight(model.board == b ? .semibold : .regular))
+    var picksTab: some View {
+        Button { model.picks = true; model.board = nil; model.refresh() } label: { Label("Picks", systemImage: "sparkles") }
+            .buttonStyle(.plain).foregroundStyle(.primary).font(.callout.weight(model.picks ? .semibold : .regular))
             .padding(.horizontal, 12).padding(.vertical, 5)
-            .background(model.board == b ? AnyShapeStyle(.tint.opacity(0.35)) : AnyShapeStyle(.quaternary), in: Capsule())
+            .background(model.picks ? AnyShapeStyle(.tint.opacity(0.35)) : AnyShapeStyle(.quaternary), in: Capsule())
+            .accessibilityIdentifier("shelf.tab.Picks")
+    }
+
+    func tab(_ title: String, _ b: String?) -> some View {
+        Button(title) { model.picks = false; model.board = b; model.refresh() }
+            .buttonStyle(.plain).foregroundStyle(.primary).font(.callout.weight(!model.picks && model.board == b ? .semibold : .regular))
+            .padding(.horizontal, 12).padding(.vertical, 5)
+            .background(!model.picks && model.board == b ? AnyShapeStyle(.tint.opacity(0.35)) : AnyShapeStyle(.quaternary), in: Capsule())
             .accessibilityIdentifier("shelf.tab.\(title)")
     }
 
@@ -208,7 +229,12 @@ struct Card: View {
     }
 
     @ViewBuilder var content: some View {
-        if item.kind == .color, let t = item.text, let c = Color(hex: t) {
+        if item.isSecret {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Secret", systemImage: "lock.fill").font(.callout.weight(.semibold))
+                Text("••••••••••").font(.callout).foregroundStyle(.secondary)
+            }
+        } else if item.kind == .color, let t = item.text, let c = Color(hex: t) {
             RoundedRectangle(cornerRadius: 8).fill(c).frame(height: 44).overlay(Text(t).font(.caption.monospaced()).padding(2).background(.thinMaterial, in: Capsule()))
         } else if item.kind == .image, let d = item.data, let img = NSImage(data: d) {
             Image(nsImage: img).resizable().scaledToFill().frame(height: 60).clipShape(RoundedRectangle(cornerRadius: 8))
