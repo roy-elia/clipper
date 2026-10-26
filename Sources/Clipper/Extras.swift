@@ -149,3 +149,21 @@ struct AboutView: View {
         }.padding(24).frame(width: 300, height: 190)
     }
 }
+
+
+/// Help ▸ Keyboard Shortcuts.
+struct ShortcutsView: View {
+    let settings: AppSettings
+    var rows: [(String, String)] {
+        let q = settings.quickModifier.symbol
+        return [("Open the shelf", settings.hotkey.display), ("Paste from the Paste Stack", settings.stackHotkey.display),
+                ("Paste the selected clip", "↩"), ("Paste as plain text", "⇧↩ or ⇧-click"), ("Paste clip 1…9", "\(q)1…\(q)9"),
+                ("Move between clips", "← →"), ("Next / previous pinboard", "⌘→ / ⌘←"), ("Preview", "Space"),
+                ("Copy without pasting", "⌘C"), ("Edit", "⌘E"), ("Rename", "⌘R"), ("Delete", "⌘⌫"), ("Close", "Esc")]
+    }
+    var body: some View {
+        Form {
+            ForEach(rows, id: \.0) { r in LabeledContent(r.0) { Text(r.1).font(.body.monospaced()).foregroundStyle(.secondary) } }
+        }.formStyle(.grouped).frame(width: 380)
+    }
+}

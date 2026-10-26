@@ -1,7 +1,7 @@
 import Foundation
 
 /// A global shortcut as Carbon key code + modifier mask. Default is ⌘⇧V.
-public struct Hotkey: Codable, Equatable, Sendable {
+public struct Hotkey: Codable, Hashable, Sendable {
     public var keyCode: UInt32
     public var modifiers: UInt32
     public static let cmd: UInt32 = 1 << 8, shift: UInt32 = 1 << 9, option: UInt32 = 1 << 11, control: UInt32 = 1 << 12

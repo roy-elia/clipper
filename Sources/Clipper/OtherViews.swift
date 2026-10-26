@@ -95,11 +95,15 @@ struct SettingsView: View {
         Form {
             Section("General") {
                 LabeledContent("Open shelf") {
-                    HotkeyRecorder(current: model.settings.hotkey) { hk in model.updateSettings { $0.hotkey = hk } }
+                    HotkeyRecorder(current: model.settings.hotkey) { hk in model.updateSettings { $0.hotkey = hk } }.id(model.settings.hotkey)
                 }
                 LabeledContent("Paste next in stack") {
-                    HotkeyRecorder(current: model.settings.stackHotkey) { hk in model.updateSettings { $0.stackHotkey = hk } }
+                    HotkeyRecorder(current: model.settings.stackHotkey) { hk in model.updateSettings { $0.stackHotkey = hk } }.id(model.settings.stackHotkey)
                 }
+                Picker("Quick paste", selection: Binding(get: { model.settings.quickModifier }, set: { v in model.updateSettings { $0.quickModifier = v } })) {
+                    ForEach(QuickModifier.allCases, id: \.self) { Text("\($0.symbol) + 1…9").tag($0) }
+                }.accessibilityIdentifier("settings.quickModifier")
+                HStack { Spacer(); Button("Reset Shortcuts to Default") { model.updateSettings { $0.resetShortcuts() } }.accessibilityIdentifier("settings.resetShortcuts") }
                 Toggle("Open at login", isOn: Binding(get: { loginEnabled }, set: { v in LoginItem.set(v); loginEnabled = LoginItem.enabled }))
                     .accessibilityIdentifier("settings.login")
                 Toggle("Index clips in Spotlight", isOn: Binding(get: { model.settings.spotlightEnabled }, set: { v in model.updateSettings { $0.spotlightEnabled = v } }))
@@ -108,6 +112,10 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings.sounds")
             }
             Section("Behaviour") {
+                Picker("Picking a clip", selection: Binding(get: { model.settings.pasteTarget }, set: { v in model.updateSettings { $0.pasteTarget = v } })) {
+                    Text("Pastes it into the front app").tag(PasteTarget.activeApp)
+                    Text("Copies it to the clipboard").tag(PasteTarget.clipboard)
+                }.pickerStyle(.radioGroup).accessibilityIdentifier("settings.pasteTarget")
                 Toggle("Always paste as plain text", isOn: Binding(get: { model.settings.alwaysPlain }, set: { v in model.updateSettings { $0.alwaysPlain = v } }))
                     .accessibilityIdentifier("settings.alwaysPlain")
                 Toggle("Show in menu bar", isOn: Binding(get: { model.settings.showMenuBarIcon }, set: { v in model.updateSettings { $0.showMenuBarIcon = v } }))
@@ -135,7 +143,11 @@ struct SettingsView: View {
             Section("Privacy") {
                 Toggle("Hide Clipper from screen sharing and recordings", isOn: Binding(get: { model.settings.hideFromSharing }, set: { v in model.updateSettings { $0.hideFromSharing = v } }))
                     .accessibilityIdentifier("settings.hideSharing")
-                Text("Clips from the apps below, and anything marked concealed, are never saved.").font(.callout)
+                Toggle("Skip passwords other apps mark as confidential", isOn: Binding(get: { model.settings.ignoreConfidential }, set: { v in model.updateSettings { $0.ignoreConfidential = v } }))
+                    .accessibilityIdentifier("settings.ignoreConfidential")
+                Toggle("Skip temporary content other apps mark as transient", isOn: Binding(get: { model.settings.ignoreTransient }, set: { v in model.updateSettings { $0.ignoreTransient = v } }))
+                    .accessibilityIdentifier("settings.ignoreTransient")
+                Text("Clips from the apps below are never saved.").font(.callout)
                 IgnoredAppsEditor(ids: Binding(get: { model.settings.ignoredBundleIDs }, set: { v in model.updateSettings { $0.ignoredBundleIDs = v } }))
             }
             Section("Smart features") {

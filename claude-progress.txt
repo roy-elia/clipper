@@ -1,0 +1,9 @@
+2026-10-26 Paste parity pass
+- Explored Paste 7.0.2 live; notes in docs/paste-behaviour.md, feature list in docs/parity.json.
+- Built: one-row shelf (search, filter popover, coloured pinboards, ⋯ menu), 234 pt square cards with
+  oversized app icon, fading text, full-bleed images on checkerboard, hold-modifier number badges,
+  grey ring when not key; card menu (Paste to app, Copy, Edit, Rename, Duplicate, Pin, Preview, Share);
+  rename; pinboard colours and rename; ⌘←/⌘→ pinboards; Space preview; ⌘C/⌘E/⌘R; paste-to-clipboard
+  mode; timed pause; confidential/transient toggles; quick-paste modifier; reset shortcuts (⇧⌘V, ⇧⌘C);
+  Keyboard Shortcuts window.
+- Not buildable here: iCloud sync proof, shared pinboards, widgets, native Shortcuts actions.

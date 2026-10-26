@@ -26,6 +26,14 @@ final class ShelfModel: ObservableObject {
     var onClear: (() -> Void)?
     var onDrop: (([NSItemProvider]) -> Bool)?
     var onSettingsChanged: (() -> Void)?
+    var onCopy: ((ClipItem) -> Void)?
+    var onEdit: ((ClipItem) -> Void)?
+    var onRename: ((ClipItem) -> Void)?
+    var onRenameBoard: ((String) -> Void)?
+    var onCommand: ((ShelfCommand) -> Void)?
+    @Published var modifierHeld = false     // quick-paste modifier is down: show the 1…9 badges
+    @Published var isKey = true             // shelf has keyboard focus: selection ring in accent, else grey
+    @Published var pausedUntil: String?     // menu text when capture is paused
 
     init(store: HistoryStore, settings: AppSettings = AppSettings()) {
         self.store = store; self.settings = settings; refresh()
@@ -64,86 +72,55 @@ final class ShelfModel: ObservableObject {
     func delete(_ item: ClipItem) { store.delete(item.id); stack.remove(item.id); refresh() }
     func addBoard(_ name: String) { if store.createPinboard(name) { board = name.trimmingCharacters(in: .whitespaces); refresh() } }
     func renameBoard(_ old: String, _ new: String) { if store.renamePinboard(old, to: new) { board = new; refresh() } }
+    func boardColor(_ name: String) -> Color { Color(hex: store.boardColor(name)) ?? .red }
     func deleteBoard(_ name: String) { store.deletePinboard(name); if board == name { board = nil }; refresh() }
     func updateSettings(_ f: (inout AppSettings) -> Void) { f(&settings); store.capacity = settings.historyCapacity; onSettingsChanged?() }
 }
+
+/// Commands from the shelf's ⋯ menu, handled by the app.
+enum ShelfCommand { case about, newClip, settings, gettingStarted, shortcuts, pause(TimeInterval?), resume, clear, quit }
 
 struct ShelfView: View {
     @ObservedObject var model: ShelfModel
     @State private var newBoard = ""
     @State private var adding = false
     @State private var dropTargeted = false
+    @State private var filtering = false
     @FocusState private var searchFocused: Bool
 
-    static let cardSize = CGSize(width: 212, height: 196)
+    static let cardSize = CGSize(width: 234, height: 234)
+    static let height: CGFloat = 332
 
     var body: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 8) {
-                picksTab
-                tab("History", nil)
-                ForEach(model.boards, id: \.self) { b in
-                    tab(b, b).contextMenu {
-                        Button("Delete Pinboard", role: .destructive) { model.deleteBoard(b) }
-                    }
-                }
-                if adding {
-                    TextField("Name", text: $newBoard).textFieldStyle(.roundedBorder).frame(width: 110)
-                        .accessibilityIdentifier("shelf.newBoardField")
-                        .onSubmit { model.addBoard(newBoard); newBoard = ""; adding = false }
-                } else {
-                    Button { adding = true } label: { Image(systemName: "plus") }
-                        .buttonStyle(.plain).padding(8).background(.quaternary, in: Circle())
-                        .accessibilityLabel("New pinboard").accessibilityIdentifier("shelf.addBoard")
-                }
-                Spacer()
-                if !model.stack.isEmpty {
-                    Label("\(model.stack.items.count) in stack", systemImage: "square.stack.3d.up")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Text(model.items.count == 1 ? "1 clip" : "\(model.items.count) clips").font(.caption).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("shelf.count")
-                Button { model.onClear?() } label: { Image(systemName: "trash") }
-                    .buttonStyle(.plain).padding(9).background(.quaternary, in: Circle())
-                    .help("Clear all saved clips").accessibilityLabel("Clear history").accessibilityIdentifier("shelf.clear")
-            }
-            HStack(spacing: 8) {
-                TextField("Search clips", text: $model.query)
-                    .textFieldStyle(.plain).padding(.horizontal, 14).padding(.vertical, 7)
-                    .background(.quaternary, in: Capsule())
-                    .focused($searchFocused)
-                    .onSubmit { model.pickSelected(plain: false) }
-                    .accessibilityIdentifier("shelf.search")
-                chip("All", nil)
-                ForEach(ClipKind.allCases, id: \.self) { chip($0.rawValue.capitalized, $0) }
-                appMenu
-            }
+        VStack(spacing: 8) {
+            bar
             if model.items.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: dropTargeted ? "arrow.down.circle" : "tray").font(.title).foregroundStyle(.secondary)
-                    Text(model.picks ? "No suggestions yet" : model.board == nil ? "Nothing copied yet. Drop images, files or text here to save them." : "Right-click a clip, then Pin to, to add it here")
+                    Text(model.picks ? "No suggestions yet" : model.board == nil ? (model.query.isEmpty ? "Nothing copied yet. Drop images, files or text here to save them." : "No clips match") : "Right-click a clip, then Pin, to add it here")
                         .foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: true) {
-                        LazyHStack(spacing: 8) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 18) {
                             ForEach(Array(model.items.enumerated()), id: \.element.id) { idx, item in
-                                Card(item: item, number: idx < 9 ? idx + 1 : nil, selected: idx == model.selection)
+                                Card(item: item, number: model.modifierHeld && idx < 9 ? idx + 1 : nil, selected: idx == model.selection, active: model.isKey,
+                                     quickSymbol: model.settings.quickModifier.symbol)
                                     .id(item.id)
-                                    .onTapGesture { model.selection = idx; model.onPick?(item, false) }
+                                    .onTapGesture { model.selection = idx; model.onPick?(item, NSEvent.modifierFlags.contains(.shift)) }
                                     .onDrag { provider(for: item) }
                                     .contextMenu { menu(for: item) }
                                     .accessibilityIdentifier("shelf.card.\(item.id)")
                             }
-                        }.padding(.vertical, 6).padding(.horizontal, 8)
+                        }.padding(.vertical, 6).padding(.horizontal, 22)
                     }
                     .onChange(of: model.selection) { if let i = model.selected { if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { proxy.scrollTo(i.id) } else { withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { proxy.scrollTo(i.id) } } } }
                 }
             }
         }
-        .padding(.horizontal, 18).padding(.vertical, 14)
-        .frame(maxWidth: .infinity, minHeight: 326, maxHeight: 326)
+        .padding(.top, 10).padding(.bottom, 12)
+        .frame(maxWidth: .infinity, minHeight: Self.height, maxHeight: Self.height)
         .background { ShelfBackdrop() }
         .clipperStyle()
         .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Palette.accent.opacity(0.14)).allowsHitTesting(false) } }
@@ -157,6 +134,127 @@ struct ShelfView: View {
         .onChange(of: model.app) { model.refresh() }
     }
 
+    // MARK: control row
+
+    var bar: some View {
+        ZStack {
+            HStack(spacing: 6) {
+                iconButton(model.picks ? "sparkles" : "sparkles", label: "Suggestions", selected: model.picks) {
+                    model.picks.toggle(); if model.picks { model.board = nil }; model.refresh()
+                }.accessibilityIdentifier("shelf.tab.Picks")
+                Spacer()
+                if !model.stack.isEmpty {
+                    Label("\(model.stack.items.count) in stack", systemImage: "square.stack.3d.up").font(.caption).foregroundStyle(.secondary)
+                }
+                Text(model.items.count == 1 ? "1 clip" : "\(model.items.count) clips").font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("shelf.count")
+                iconButton("trash", label: "Clear history") { model.onClear?() }.accessibilityIdentifier("shelf.clear")
+                moreMenu
+            }
+            HStack(spacing: 6) {
+                searchField
+                iconButton("line.3.horizontal.decrease", label: "Filter", selected: model.kind != nil || model.app != nil) { filtering.toggle() }
+                    .accessibilityIdentifier("shelf.filter")
+                    .popover(isPresented: $filtering, arrowEdge: .top) { FilterPopover(model: model) }
+                tab("Clipboard", nil, symbol: "clock.arrow.circlepath")
+                ForEach(model.boards, id: \.self) { b in
+                    tab(b, b, dot: model.boardColor(b)).contextMenu {
+                        Button("Rename…") { model.onRenameBoard?(b) }
+                        Menu("Colour") {
+                            ForEach(HistoryStore.boardPalette, id: \.self) { hex in
+                                Button { model.store.setBoardColor(b, hex); model.refresh() } label: {
+                                    Label(colorName(hex), systemImage: model.store.boardColor(b) == hex ? "checkmark.circle.fill" : "circle.fill")
+                                }
+                            }
+                        }
+                        Divider()
+                        Button("Delete Pinboard", role: .destructive) { model.deleteBoard(b) }
+                    }
+                }
+                if adding {
+                    TextField("Name", text: $newBoard).textFieldStyle(.roundedBorder).frame(width: 110)
+                        .accessibilityIdentifier("shelf.newBoardField")
+                        .onSubmit { model.addBoard(newBoard); newBoard = ""; adding = false }
+                } else {
+                    iconButton("plus", label: "New pinboard") { adding = true }.accessibilityIdentifier("shelf.addBoard")
+                }
+            }
+        }
+        .padding(.horizontal, 18).frame(height: 36)
+    }
+
+    var searchField: some View {
+        let open = searchFocused || !model.query.isEmpty
+        return HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("Search", text: $model.query)
+                .textFieldStyle(.plain).focused($searchFocused)
+                .onSubmit { model.pickSelected(plain: false) }
+                .accessibilityIdentifier("shelf.search")
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .frame(width: open ? 200 : 110)
+        .background(open ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: Capsule())
+        .animation(.easeOut(duration: 0.15), value: open)
+    }
+
+    var moreMenu: some View {
+        Menu {
+            Button("About Clipper") { model.onCommand?(.about) }
+            Divider()
+            Button("New Clip…") { model.onCommand?(.newClip) }.keyboardShortcut("n")
+            Button("Settings…") { model.onCommand?(.settings) }.keyboardShortcut(",")
+            Menu("Help") {
+                Button("Getting Started") { model.onCommand?(.gettingStarted) }
+                Button("Keyboard Shortcuts") { model.onCommand?(.shortcuts) }
+            }
+            Divider()
+            if let p = model.pausedUntil {
+                Button("Resume Capture (\(p))") { model.onCommand?(.resume) }
+            } else {
+                Menu("Pause Capture") {
+                    Button("Until I Resume") { model.onCommand?(.pause(nil)) }
+                    Divider()
+                    ForEach(CapturePause.durations, id: \.1) { d in Button("For \(d.0)") { model.onCommand?(.pause(d.1)) } }
+                }
+            }
+            Button("Clear History…") { model.onCommand?(.clear) }
+            Divider()
+            Button("Quit Clipper") { model.onCommand?(.quit) }.keyboardShortcut("q")
+        } label: { Image(systemName: "ellipsis").frame(width: 28, height: 28) }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .accessibilityLabel("More").accessibilityIdentifier("shelf.more")
+    }
+
+    func iconButton(_ symbol: String, label: String, selected: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) { Image(systemName: symbol).frame(width: 28, height: 28).contentShape(Circle()) }
+            .buttonStyle(.plain)
+            .foregroundStyle(selected ? Palette.accent : Color.primary)
+            .background(selected ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: Circle())
+            .help(label).accessibilityLabel(label)
+    }
+
+    func tab(_ title: String, _ b: String?, symbol: String? = nil, dot: Color? = nil) -> some View {
+        let on = !model.picks && model.board == b
+        return Button { model.picks = false; model.board = b; model.refresh() } label: {
+            HStack(spacing: 6) {
+                if let symbol { Image(systemName: symbol) }
+                if let dot { Circle().fill(dot).frame(width: 9, height: 9) }
+                Text(title)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(on ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain).font(.callout.weight(on ? .semibold : .regular))
+        .accessibilityIdentifier("shelf.tab.\(b == nil ? "History" : title)")
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+
+    func colorName(_ hex: String) -> String {
+        ["#FF5F57": "Red", "#FFB340": "Orange", "#FFD84D": "Yellow", "#34C759": "Green", "#30B0C7": "Teal", "#3D7BFF": "Blue", "#AF52DE": "Purple", "#FF6FAF": "Pink"][hex] ?? hex
+    }
+
     /// What leaves the shelf when a card is dragged: the image, the files, or the text.
     func provider(for item: ClipItem) -> NSItemProvider {
         if item.isSecret { return NSItemProvider() }
@@ -166,160 +264,215 @@ struct ShelfView: View {
     }
 
     func handleKey(_ p: KeyPress) -> KeyPress.Result {
-        let cmd = p.modifiers.contains(.command)
         switch p.key {
+        case .leftArrow where p.modifiers.contains(.command): model.cycleBoard(-1); return .handled
+        case .rightArrow where p.modifiers.contains(.command): model.cycleBoard(1); return .handled
         case .leftArrow: model.move(-1); return .handled
         case .rightArrow: model.move(1); return .handled
         case .return: model.pickSelected(plain: p.modifiers.contains(.shift)); return .handled
         case .escape: model.onClose?(); return .handled
-        case .delete where cmd: model.deleteSelected(); return .handled
-        default: break
+        default: return .ignored
         }
-        if cmd, p.characters == "]" { model.cycleBoard(1); return .handled }
-        if cmd, p.characters == "[" { model.cycleBoard(-1); return .handled }
-        if cmd, let n = Int(p.characters), (1...9).contains(n) { model.pick(number: n); return .handled }
-        if cmd, p.characters == "y", let i = model.selected { model.onPreview?(i); return .handled }
-        return .ignored
-    }
-
-    var appMenu: some View {
-        Menu {
-            Button("All apps") { model.app = nil }
-            Divider()
-            ForEach(model.apps, id: \.self) { b in Button { model.app = b } label: { Label(AppInfo.name(b), systemImage: "app") } }
-        } label: {
-            if let b = model.app, let icon = AppInfo.icon(b) {
-                Image(nsImage: icon).resizable().frame(width: 16, height: 16)
-            } else { Image(systemName: "app.dashed") }
-        }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-        .padding(.horizontal, 8).padding(.vertical, 5).background(.quaternary, in: Capsule())
-        .accessibilityLabel("Filter by app").accessibilityIdentifier("shelf.appFilter")
     }
 
     @ViewBuilder func menu(for item: ClipItem) -> some View {
-        Button("Paste") { model.onPick?(item, false) }
+        Button("Paste to \(model.targetApp.map(AppInfo.name) ?? "Front App")") { model.onPick?(item, false) }
         Button("Paste as Plain Text") { model.onPick?(item, true) }
-        Button("Preview") { model.onPreview?(item) }
-        Button("Add to Paste Stack") { model.stack.push(item) }
+        Button("Copy") { model.onCopy?(item) }
+        Divider()
+        if item.data == nil && item.fileURLs == nil && !item.isSecret { Button("Edit") { model.onEdit?(item) } }
+        Button("Rename…") { model.onRename?(item) }
         Button("Duplicate") { model.store.duplicate(item.id); model.refresh() }
-        if !item.isSecret { Button("Share…") { model.onShare?(item) } }
-        if item.isSecret { Button("Not a Secret") { model.store.markSecret(item.id, false); model.refresh() } }
-        else if item.kind == .text { Button("Mark as Secret") { model.store.markSecret(item.id); model.refresh() } }
-        Menu("Pin to") {
+        Button("Delete", role: .destructive) { model.delete(item) }
+        Divider()
+        Menu("Pin") {
             ForEach(model.boards, id: \.self) { b in Button(b) { model.pin(item, to: b) } }
             if item.pinboard != nil { Divider(); Button("Unpin") { model.pin(item, to: nil) } }
         }
+        Button("Add to Paste Stack") { model.stack.push(item) }
+        if item.isSecret { Button("Not a Secret") { model.store.markSecret(item.id, false); model.refresh() } }
+        else if item.kind == .text { Button("Mark as Secret") { model.store.markSecret(item.id); model.refresh() } }
         Divider()
-        Button("Delete", role: .destructive) { model.delete(item) }
-    }
-
-    var picksTab: some View {
-        Button { model.picks = true; model.board = nil; model.refresh() } label: { Label("Picks", systemImage: "sparkles") }
-            .buttonStyle(.plain).font(.callout.weight(model.picks ? .semibold : .regular))
-            .capsuleChip(selected: model.picks)
-            .accessibilityIdentifier("shelf.tab.Picks")
-    }
-
-    func tab(_ title: String, _ b: String?) -> some View {
-        Button(title) { model.picks = false; model.board = b; model.refresh() }
-            .buttonStyle(.plain).font(.callout.weight(!model.picks && model.board == b ? .semibold : .regular))
-            .capsuleChip(selected: !model.picks && model.board == b)
-            .accessibilityIdentifier("shelf.tab.\(title)")
-    }
-
-    func chip(_ title: String, _ k: ClipKind?) -> some View {
-        Button(title) { model.kind = k }
-            .buttonStyle(.plain).font(.callout)
-            .capsuleChip(selected: model.kind == k, hPad: 10)
-            .accessibilityIdentifier("shelf.chip.\(title)")
+        Button("Preview") { model.onPreview?(item) }
+        if !item.isSecret { Button("Share…") { model.onShare?(item) } }
     }
 }
 
-/// A saved clip: a header in the source app's colour with the kind, age and app icon, the content, then a footer with
-/// the details (size, length, host) and the ⌘ number that pastes it.
+/// Type, app and pinboard filters, shown from the filter button.
+struct FilterPopover: View {
+    @ObservedObject var model: ShelfModel
+    let cols = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            section("Type")
+            LazyVGrid(columns: cols, spacing: 8) {
+                ForEach(ClipKind.allCases, id: \.self) { k in
+                    chip(k.rawValue.capitalized, symbol: symbol(k), on: model.kind == k) { model.kind = model.kind == k ? nil : k }
+                }
+            }
+            if !model.apps.isEmpty {
+                section("App")
+                LazyVGrid(columns: cols, spacing: 8) {
+                    ForEach(model.apps, id: \.self) { b in
+                        chip(AppInfo.name(b), icon: AppInfo.icon(b), on: model.app == b) { model.app = model.app == b ? nil : b }
+                    }
+                }
+            }
+            if !model.boards.isEmpty {
+                section("Pinboard")
+                LazyVGrid(columns: cols, spacing: 8) {
+                    ForEach(model.boards, id: \.self) { b in
+                        chip(b, dot: model.boardColor(b), on: model.board == b) { model.picks = false; model.board = model.board == b ? nil : b; model.refresh() }
+                    }
+                }
+            }
+            if model.kind != nil || model.app != nil {
+                Button("Clear Filters") { model.kind = nil; model.app = nil }.buttonStyle(.link)
+            }
+        }
+        .padding(14).frame(width: 440)
+    }
+
+    func section(_ t: String) -> some View { Text(t).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary) }
+
+    func symbol(_ k: ClipKind) -> String {
+        switch k { case .text: "text.alignleft"; case .link: "link"; case .image: "photo"; case .file: "doc"; case .color: "paintpalette"; default: "questionmark.square" }
+    }
+
+    func chip(_ title: String, symbol: String? = nil, icon: NSImage? = nil, dot: Color? = nil, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let symbol { Image(systemName: symbol) }
+                if let icon { Image(nsImage: icon).resizable().frame(width: 16, height: 16) }
+                if let dot { Circle().fill(dot).frame(width: 9, height: 9) }
+                Text(title).lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .foregroundStyle(on ? Palette.inkOn : Color.primary)
+            .background(on ? AnyShapeStyle(Palette.ink) : AnyShapeStyle(.quaternary), in: Capsule())
+            .contentShape(Capsule())
+        }.buttonStyle(.plain)
+        .accessibilityIdentifier("filter.\(title)")
+    }
+}
+
+/// A saved clip: a header in the source app's colour with its name or kind, age and an oversized app icon cropped
+/// by the header edge; the content (text fades out, images fill the card); and a centred detail at the bottom.
 struct Card: View {
     let item: ClipItem
     var number: Int? = nil
     var selected = false
+    var active = true
+    var quickSymbol = "⌘"
 
     var body: some View {
         let header = AppInfo.color(item.sourceBundleID)
         let ink = AppInfo.ink(on: header)
+        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
         VStack(spacing: 0) {
             ZStack(alignment: .topLeading) {
                 header
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(kindTitle).font(.title3.weight(.semibold))
-                    Text(Relative.string(from: item.createdAt)).font(.caption).opacity(0.82)
-                }
-                .foregroundStyle(ink).padding(.leading, 14).padding(.top, 9)
-                HStack(spacing: 4) {
-                    if item.pinboard != nil { Image(systemName: "pin.fill").font(.caption2) }
-                    if item.isRich { Image(systemName: "textformat").font(.caption2).accessibilityLabel("Formatted") }
-                }.foregroundStyle(ink).frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 60).padding(.top, 13)
                 if let b = item.sourceBundleID, let icon = AppInfo.icon(b) {
-                    Image(nsImage: icon).resizable().frame(width: 40, height: 40)
-                        .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 10).padding(.top, 8)
+                    Image(nsImage: icon).resizable().frame(width: 64, height: 64)
+                        .frame(maxWidth: .infinity, alignment: .trailing).offset(x: 8, y: -6)
                 }
-            }.frame(height: 56)
-            content.padding(12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .background(Color(nsColor: .textBackgroundColor).opacity(0.55))
-            HStack {
-                Spacer(minLength: 0)
-                Text(item.detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            .overlay(alignment: .trailing) {
-                if let n = number {
-                    Text("⌘\(n)").font(.caption2.monospacedDigit().weight(.semibold)).foregroundStyle(.secondary)
-                        .padding(.horizontal, 7).padding(.vertical, 2).background(.quaternary, in: Capsule())
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 4) {
+                        Text(title).font(.headline).lineLimit(1)
+                        if item.pinboard != nil { Image(systemName: "pin.fill").font(.caption2) }
+                    }
+                    Text(Relative.string(from: item.createdAt)).font(.caption).opacity(0.85)
                 }
+                .foregroundStyle(ink).padding(.leading, 14).padding(.top, 8).padding(.trailing, 60)
             }
-            .padding(.horizontal, 10).frame(height: 30).background(Color(nsColor: .textBackgroundColor).opacity(0.55))
+            .frame(height: 48, alignment: .top).clipped()
+            ZStack(alignment: .bottom) {
+                content
+                footer
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .textBackgroundColor).opacity(0.62))
         }
         .frame(width: ShelfView.cardSize.width, height: ShelfView.cardSize.height)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .shadow(color: .black.opacity(0.16), radius: 5, y: 2)
-        .padding(5)
-        .overlay { if selected { RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(Palette.accent, lineWidth: 3) } }
+        .clipShape(shape)
+        .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+        .padding(4)
+        .overlay {
+            if selected {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(active ? Palette.accent : Color.secondary, lineWidth: 3)
+            }
+        }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(kindTitle), \(item.isSecret ? "hidden secret" : item.title), \(item.detail)")
+        .accessibilityLabel("\(title), \(item.isSecret ? "hidden secret" : item.title), \(item.detail)")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    var kindTitle: String { item.isSecret ? "Secret" : item.kind.rawValue.capitalized }
+    var title: String { item.customTitle ?? (item.isSecret ? "Secret" : item.kind.rawValue.capitalized) }
+    var fullBleed: Bool { !item.isSecret && (item.kind == .image || item.kind == .color) }
+
+    @ViewBuilder var footer: some View {
+        HStack {
+            Spacer(minLength: 0)
+            Text(item.detail).font(.caption).foregroundStyle(fullBleed ? Color.primary : Color.secondary).lineLimit(1)
+                .padding(.horizontal, fullBleed ? 8 : 0).padding(.vertical, fullBleed ? 3 : 0)
+                .background { if fullBleed { Capsule().fill(.ultraThinMaterial) } }
+            Spacer(minLength: 0)
+        }
+        .overlay(alignment: .trailing) {
+            if let n = number {
+                Text("\(quickSymbol)\(n)").font(.caption2.monospacedDigit().weight(.semibold))
+                    .padding(.horizontal, 7).padding(.vertical, 2).background(.thinMaterial, in: Capsule())
+            }
+        }
+        .padding(.horizontal, 10).padding(.bottom, 9)
+    }
 
     @ViewBuilder var content: some View {
         if item.isSecret {
             VStack(alignment: .leading, spacing: 6) {
                 Image(systemName: "lock.fill").font(.title2)
                 Text("••••••••••").foregroundStyle(.secondary)
-            }
+            }.padding(14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else if item.kind == .color, let t = item.text, let c = Color(hex: t) {
-            RoundedRectangle(cornerRadius: 10, style: .continuous).fill(c).frame(maxHeight: .infinity)
-                .overlay(Text(t).font(.callout.monospaced()).padding(4).background(.thinMaterial, in: Capsule()))
+            c.overlay(alignment: .center) { Text(t).font(.callout.monospaced()).padding(.horizontal, 8).padding(.vertical, 3).background(.thinMaterial, in: Capsule()).padding(.bottom, 24) }
         } else if item.kind == .image, let d = item.data, let img = NSImage(data: d) {
-            Color.clear.overlay { Image(nsImage: img).resizable().scaledToFill() }
-                .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            Checkerboard().overlay { Image(nsImage: img).resizable().scaledToFit() }.clipped()
         } else if item.kind == .file {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 Image(systemName: "doc.fill").font(.title2).foregroundStyle(.secondary)
-                Text(item.fileNames.joined(separator: "\n")).font(.callout).lineLimit(4)
-            }
+                Text(item.fileNames.joined(separator: "\n")).font(.callout).lineLimit(5)
+            }.padding(14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else if item.kind == .link {
             VStack(alignment: .leading, spacing: 4) {
-                Image(systemName: "link").font(.title3).foregroundStyle(.secondary)
                 if let t = item.extras?["linkTitle"].flatMap({ String(data: $0, encoding: .utf8) }) {
                     Text(t).font(.callout.weight(.semibold)).lineLimit(3)
                     Text(item.text ?? "").font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 } else {
+                    Image(systemName: "link").foregroundStyle(.secondary)
                     Text(item.text ?? item.title).font(.callout).lineLimit(5)
                 }
-            }
+            }.padding(14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
-            Text(item.text ?? item.title).font(.system(size: 14)).lineLimit(8)
+            Text(item.text ?? item.title).font(.system(size: 14)).lineSpacing(1)
+                .padding(14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .mask(LinearGradient(stops: [.init(color: .black, location: 0.62), .init(color: .clear, location: 0.86)], startPoint: .top, endPoint: .bottom))
+        }
+    }
+}
+
+/// Grey checks behind images so transparent areas read as transparent.
+struct Checkerboard: View {
+    var body: some View {
+        Canvas { ctx, size in
+            let s: CGFloat = 8
+            for y in stride(from: 0, to: size.height, by: s) {
+                for x in stride(from: 0, to: size.width, by: s) where (Int(x / s) + Int(y / s)) % 2 == 0 {
+                    ctx.fill(Path(CGRect(x: x, y: y, width: s, height: s)), with: .color(.gray.opacity(0.14)))
+                }
+            }
         }
     }
 }

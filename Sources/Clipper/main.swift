@@ -40,6 +40,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var syncState = SyncState()
     var syncing = false
     var confirming = false
+    var pause = CapturePause()
+    var shortcutsWindow: NSWindow?
     var activity: NSUserActivity?
     static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev" }
     static var build: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev" }
@@ -59,6 +61,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         collectItem?.target = self
         let pause = menu.addItem(withTitle: "Pause Capture", action: #selector(togglePause(_:)), keyEquivalent: "")
         pause.target = self; pauseItem = pause
+        let timed = NSMenu()
+        for (i, d) in CapturePause.durations.enumerated() {
+            let it = timed.addItem(withTitle: "For \(d.0)", action: #selector(pauseFor(_:)), keyEquivalent: ""); it.target = self; it.tag = i
+        }
+        menu.addItem(withTitle: "Pause For", action: nil, keyEquivalent: "").submenu = timed
         grantItem = menu.addItem(withTitle: "Allow Pasting (Accessibility)…", action: #selector(grant), keyEquivalent: "")
         grantItem?.target = self
         menu.delegate = self
@@ -90,7 +97,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             statusItem?.isVisible = model.settings.showMenuBarIcon
             monitor.secretPolicy = model.settings.secretPolicy
-            monitor.rules = CaptureRules(ignoredBundleIDs: Set(model.settings.ignoredBundleIDs))
+            monitor.rules = makeRules()
             sounds.enabled = model.settings.playSounds
             if stackHotkeys.registered != model.settings.stackHotkey { stackHotkeys.register(model.settings.stackHotkey) }
             applyPrivacy()
@@ -118,14 +125,20 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if model.settings.spotlightEnabled { applySpotlight() }
         }
         Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.purgeSecrets(); self?.purgeExpired() }
+            MainActor.assumeIsolated { self?.purgeSecrets(); self?.purgeExpired(); if let s = self, s.pause.active, !s.pause.isPaused() { s.resume() } }
         }
         installPanelShortcuts()
-        monitor.rules = CaptureRules(ignoredBundleIDs: Set(model.settings.ignoredBundleIDs))
+        monitor.rules = makeRules()
         sounds.enabled = model.settings.playSounds
         stackHotkeys.onFire = { [weak self] in self?.pasteNext() }
         stackHotkeys.register(model.settings.stackHotkey)
         model.onShare = { [weak self] item in self?.share(item) }
+        model.onCopy = { [weak self] item in self?.copyOnly(item) }
+        model.onEdit = { [weak self] item in self?.preview(item) }
+        model.onRename = { [weak self] item in self?.renameClip(item) }
+        model.onRenameBoard = { [weak self] name in self?.renameBoard(name) }
+        model.onCommand = { [weak self] c in self?.run(c) }
+        installModifierWatch()
         syncState = (try? Data(contentsOf: App.syncStateURL)).flatMap { try? JSONDecoder().decode(SyncState.self, from: $0) } ?? SyncState()
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.syncNow() } }
         DispatchQueue.main.async { [weak self] in self?.showFirstRunWindows() }
@@ -178,16 +191,125 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// ⌘1–9 paste, ⌘Y preview, ⌘⌫ delete. A local monitor is used because a non-activating panel never gets
     /// the key-equivalent pass that normal windows do.
+    var quickFlag: NSEvent.ModifierFlags {
+        switch model.settings.quickModifier { case .command: .command; case .option: .option; case .control: .control }
+    }
+
+    func makeRules() -> CaptureRules {
+        var r = CaptureRules(ignoredBundleIDs: Set(model.settings.ignoredBundleIDs))
+        r.ignoreConfidential = model.settings.ignoreConfidential; r.ignoreTransient = model.settings.ignoreTransient
+        return r
+    }
+
+    /// Holding the quick-paste modifier shows the 1…9 badges; key status decides the selection ring's colour.
+    func installModifierWatch() {
+        NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] e in
+            guard let self else { return e }
+            let held = e.modifierFlags.intersection([.command, .option, .control, .shift]) == quickFlag
+            if model.modifierHeld != held { model.modifierHeld = held }
+            return e
+        }
+        for (n, key) in [(NSWindow.didBecomeKeyNotification, true), (NSWindow.didResignKeyNotification, false)] {
+            NotificationCenter.default.addObserver(forName: n, object: nil, queue: .main) { [weak self] note in
+                let win = ObjectIdentifier(note.object as AnyObject)
+                MainActor.assumeIsolated {
+                    guard let self, let p = self.panel, ObjectIdentifier(p) == win else { return }
+                    self.model.isKey = key; if !key { self.model.modifierHeld = false }
+                }
+            }
+        }
+    }
+
+    /// Copy without pasting: the clip goes on the clipboard and the shelf closes.
+    func copyOnly(_ item: ClipItem) {
+        monitor.write(item, plain: model.settings.alwaysPlain)
+        panel?.orderOut(nil)
+        osd.show(item.isSecret ? "Secret copied" : "Copied", symbol: "doc.on.clipboard", hideFromSharing: model.settings.hideFromSharing)
+    }
+
+    func ask(_ title: String, value: String, button: String) -> String? {
+        confirming = true; defer { confirming = false }
+        NSApp.activate()
+        let a = NSAlert(); a.messageText = title
+        let f = NSTextField(string: value); f.frame = NSRect(x: 0, y: 0, width: 260, height: 24); f.placeholderString = "Name"
+        a.accessoryView = f; a.addButton(withTitle: button); a.addButton(withTitle: "Cancel")
+        a.window.initialFirstResponder = f
+        return a.runModal() == .alertFirstButtonReturn ? f.stringValue : nil
+    }
+
+    func renameClip(_ item: ClipItem) {
+        guard let name = ask("Rename Clip", value: item.customTitle ?? "", button: "Rename") else { return }
+        store.rename(item.id, to: name); model.refresh()
+    }
+
+    func renameBoard(_ old: String) {
+        guard let name = ask("Rename Pinboard", value: old, button: "Rename") else { return }
+        model.renameBoard(old, name)
+    }
+
+    func run(_ c: ShelfCommand) {
+        switch c {
+        case .about: panel?.orderOut(nil); showAbout()
+        case .newClip: panel?.orderOut(nil); showNewClip()
+        case .settings: panel?.orderOut(nil); showSettings()
+        case .gettingStarted: panel?.orderOut(nil); showGettingStarted()
+        case .shortcuts: panel?.orderOut(nil); showShortcuts()
+        case .pause(let d): setPause(d)
+        case .resume: resume()
+        case .clear: confirmClear()
+        case .quit: NSApp.terminate(nil)
+        }
+    }
+
+    /// Pauses capture until resumed or for a fixed time; a timer resumes it when the time is up.
+    func setPause(_ duration: TimeInterval?) {
+        pause = CapturePause(active: true, until: duration.map { Date().addingTimeInterval($0) })
+        applyPause()
+        let f = DateFormatter(); f.timeStyle = .short
+        osd.show(pause.until.map { "Capture paused until \(f.string(from: $0))" } ?? "Capture paused", symbol: "pause.circle", hideFromSharing: model.settings.hideFromSharing)
+    }
+
+    func resume() {
+        pause = CapturePause(); applyPause()
+        osd.show("Capture resumed", symbol: "play.circle", hideFromSharing: model.settings.hideFromSharing)
+    }
+
+    func applyPause() {
+        monitor.paused = pause.isPaused()
+        let f = DateFormatter(); f.timeStyle = .short
+        model.pausedUntil = monitor.paused ? (pause.until.map { "until \(f.string(from: $0))" } ?? "paused") : nil
+        pauseItem?.title = monitor.paused ? "Resume Capture" : "Pause Capture"
+        statusLine?.title = monitor.paused ? "Paused" + (pause.until.map { " until \(f.string(from: $0))" } ?? "") : "Capturing"
+    }
+
+    func showShortcuts() {
+        if shortcutsWindow == nil {
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 420), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            w.title = "Keyboard Shortcuts"; w.isReleasedWhenClosed = false
+            w.contentView = NSHostingView(rootView: ShortcutsView(settings: model.settings))
+            shortcutsWindow = w
+        }
+        shortcutsWindow?.contentView = NSHostingView(rootView: ShortcutsView(settings: model.settings))
+        shortcutsWindow?.center(); NSApp.activate(); shortcutsWindow?.makeKeyAndOrderFront(nil)
+    }
+
     func installPanelShortcuts() {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             guard let self, let panel, panel.isVisible, e.window === panel else { return e }
             let mods = e.modifierFlags.intersection([.command, .option, .control, .shift])
             // ⇧Return pastes as plain text; the text field would otherwise turn it into a line break.
             if mods == .shift, e.keyCode == 36 || e.keyCode == 76 { model.pickSelected(plain: true); return nil }
+            // Space previews the selected clip while the search field is empty.
+            if mods.isEmpty, e.keyCode == 49, model.query.isEmpty, let i = model.selected { model.onPreview?(i); return nil }
+            if mods == quickFlag, let c = e.charactersIgnoringModifiers, let n = Int(c), (1...9).contains(n) { model.pick(number: n); return nil }
+            if mods == .command, e.keyCode == 123 { model.cycleBoard(-1); return nil }
+            if mods == .command, e.keyCode == 124 { model.cycleBoard(1); return nil }
             guard mods == .command else { return e }
             if e.keyCode == 51 { model.deleteSelected(); return nil }
             if let c = e.charactersIgnoringModifiers {
-                if let n = Int(c), (1...9).contains(n) { model.pick(number: n); return nil }
+                if c == "c", model.query.isEmpty || panel.firstResponder as? NSTextView == nil, let i = model.selected { copyOnly(i); return nil }
+                if c == "e", let i = model.selected { preview(i); return nil }
+                if c == "r", let i = model.selected { renameClip(i); return nil }
                 if c == "y", let i = model.selected { model.onPreview?(i); return nil }
                 if c == "]" { model.cycleBoard(1); return nil }
                 if c == "[" { model.cycleBoard(-1); return nil }
@@ -373,6 +495,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
            target != Bundle.main.bundleIdentifier {
             model.log.record(.init(itemID: item.id, kind: item.kind, targetApp: target)); model.log.save(App.logURL)
         }
+        if model.settings.pasteTarget == .clipboard { copyOnly(item); return }
         monitor.write(item, plain: plain || model.settings.alwaysPlain)
         sounds.play(.paste)
         panel?.orderOut(nil)
@@ -394,10 +517,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         do { try server.start(); mcp = server } catch { NSLog("Clipper MCP failed to start: \(error)") }
     }
 
+    @objc func pauseFor(_ s: NSMenuItem) { setPause(CapturePause.durations[s.tag].1) }
+
     @objc func togglePause(_ s: NSMenuItem) {
-        monitor.paused.toggle(); s.title = monitor.paused ? "Resume Capture" : "Pause Capture"
-        statusLine?.title = monitor.paused ? "Paused" : "Capturing"
-        osd.show(monitor.paused ? "Capture paused" : "Capture resumed", symbol: monitor.paused ? "pause.circle" : "play.circle", hideFromSharing: model.settings.hideFromSharing)
+        if monitor.paused { resume() } else { setPause(nil) }
     }
 
     @objc func statusClicked() {
@@ -491,7 +614,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func toggle() {
         if panel == nil {
-            let p = ShelfPanel(contentRect: NSRect(x: 0, y: 0, width: 900, height: 326),
+            let p = ShelfPanel(contentRect: NSRect(x: 0, y: 0, width: 900, height: ShelfView.height),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             p.isFloatingPanel = true; p.hasShadow = false
             p.backgroundColor = .clear; p.isOpaque = false
@@ -515,7 +638,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
         if let v = screen?.visibleFrame, let p = panel {
-            let inset: CGFloat = 12, h: CGFloat = 326
+            let inset: CGFloat = 8, h: CGFloat = ShelfView.height
             let end = NSRect(x: v.minX + inset, y: v.minY + inset, width: v.width - inset * 2, height: h)
             let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             p.setFrame(reduce ? end : end.offsetBy(dx: 0, dy: -(h + inset)), display: false)
