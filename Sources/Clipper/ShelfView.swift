@@ -65,10 +65,10 @@ struct ShelfView: View {
     @State private var dropTargeted = false
     @FocusState private var searchFocused: Bool
 
-    static let cardSize = CGSize(width: 232, height: 228)
+    static let cardSize = CGSize(width: 212, height: 196)
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             HStack(spacing: 8) {
                 picksTab
                 tab("History", nil)
@@ -99,7 +99,7 @@ struct ShelfView: View {
             }
             HStack(spacing: 8) {
                 TextField("Search clips", text: $model.query)
-                    .textFieldStyle(.plain).padding(.horizontal, 16).padding(.vertical, 9)
+                    .textFieldStyle(.plain).padding(.horizontal, 14).padding(.vertical, 7)
                     .background(.quaternary, in: Capsule())
                     .focused($searchFocused)
                     .onSubmit { model.pickSelected(plain: false) }
@@ -117,7 +117,7 @@ struct ShelfView: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal, showsIndicators: true) {
-                        LazyHStack(spacing: 10) {
+                        LazyHStack(spacing: 8) {
                             ForEach(Array(model.items.enumerated()), id: \.element.id) { idx, item in
                                 Card(item: item, number: idx < 9 ? idx + 1 : nil, selected: idx == model.selection)
                                     .id(item.id)
@@ -126,14 +126,14 @@ struct ShelfView: View {
                                     .contextMenu { menu(for: item) }
                                     .accessibilityIdentifier("shelf.card.\(item.id)")
                             }
-                        }.padding(.vertical, 8).padding(.horizontal, 10)
+                        }.padding(.vertical, 6).padding(.horizontal, 8)
                     }
                     .onChange(of: model.selection) { if let i = model.selected { if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { proxy.scrollTo(i.id) } else { withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { proxy.scrollTo(i.id) } } } }
                 }
             }
         }
-        .padding(.horizontal, 22).padding(.vertical, 20)
-        .frame(maxWidth: .infinity, minHeight: 384, maxHeight: 384)
+        .padding(.horizontal, 18).padding(.vertical, 14)
+        .frame(maxWidth: .infinity, minHeight: 326, maxHeight: 326)
         .background { ShelfBackdrop() }
         .clipperStyle()
         .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Palette.accent.opacity(0.14)).allowsHitTesting(false) } }
@@ -240,17 +240,17 @@ struct Card: View {
                     Text(kindTitle).font(.title3.weight(.semibold))
                     Text(Relative.string(from: item.createdAt)).font(.caption).opacity(0.82)
                 }
-                .foregroundStyle(ink).padding(.leading, 16).padding(.top, 12)
+                .foregroundStyle(ink).padding(.leading, 14).padding(.top, 9)
                 HStack(spacing: 4) {
                     if item.pinboard != nil { Image(systemName: "pin.fill").font(.caption2) }
                     if item.isRich { Image(systemName: "textformat").font(.caption2).accessibilityLabel("Formatted") }
-                }.foregroundStyle(ink).frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 68).padding(.top, 16)
+                }.foregroundStyle(ink).frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 60).padding(.top, 13)
                 if let b = item.sourceBundleID, let icon = AppInfo.icon(b) {
-                    Image(nsImage: icon).resizable().frame(width: 44, height: 44)
-                        .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 12).padding(.top, 10)
+                    Image(nsImage: icon).resizable().frame(width: 40, height: 40)
+                        .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 10).padding(.top, 8)
                 }
-            }.frame(height: 64)
-            content.padding(14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }.frame(height: 56)
+            content.padding(12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .background(Color(nsColor: .textBackgroundColor).opacity(0.55))
             HStack {
                 Spacer(minLength: 0)
@@ -263,13 +263,13 @@ struct Card: View {
                         .padding(.horizontal, 7).padding(.vertical, 2).background(.quaternary, in: Capsule())
                 }
             }
-            .padding(.horizontal, 10).frame(height: 34).background(Color(nsColor: .textBackgroundColor).opacity(0.55))
+            .padding(.horizontal, 10).frame(height: 30).background(Color(nsColor: .textBackgroundColor).opacity(0.55))
         }
         .frame(width: ShelfView.cardSize.width, height: ShelfView.cardSize.height)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .shadow(color: .black.opacity(0.16), radius: 5, y: 2)
-        .padding(6)
-        .overlay { if selected { RoundedRectangle(cornerRadius: 27, style: .continuous).strokeBorder(Palette.accent, lineWidth: 3) } }
+        .padding(5)
+        .overlay { if selected { RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(Palette.accent, lineWidth: 3) } }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(kindTitle), \(item.isSecret ? "hidden secret" : item.title), \(item.detail)")
         .accessibilityAddTraits(selected ? .isSelected : [])
