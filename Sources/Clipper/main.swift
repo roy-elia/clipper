@@ -180,7 +180,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Pops the oldest stacked clip and pastes it; the stack window never takes focus from the target app.
     func pasteNext() {
-        guard let item = model.stack.pop() else { osd.show("Stack is empty", symbol: "square.stack.3d.up", hideFromSharing: model.settings.hideFromSharing); return }
+        // An empty stack opens the Paste Stack window so it can be filled; otherwise paste the next item.
+        guard let item = model.stack.pop() else { showStack(); return }
         osd.show("Pasting \(item.isSecret ? "a secret" : String(item.title.prefix(24)))  ·  \(model.stack.items.count) left", symbol: "square.stack.3d.up", hideFromSharing: model.settings.hideFromSharing)
         pick(item, plain: false)
     }
