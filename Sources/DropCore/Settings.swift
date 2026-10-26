@@ -7,6 +7,15 @@ public enum SecretPolicy: String, Codable, CaseIterable, Sendable {
     case skip    // never save it
 }
 
+/// How long unpinned clips are kept.
+public enum Retention: String, Codable, CaseIterable, Sendable {
+    case day, week, month, year, forever
+    public var seconds: TimeInterval? {
+        switch self { case .day: 86_400; case .week: 7 * 86_400; case .month: 30 * 86_400; case .year: 365 * 86_400; case .forever: nil }
+    }
+    public var label: String { rawValue == "forever" ? "Forever" : "1 \(rawValue)" }
+}
+
 public struct AppSettings: Codable, Equatable, Sendable {
     public var hotkey: Hotkey = .default
     public var historyCapacity: Int = 1000
@@ -24,6 +33,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var onboarded: Bool = false
     public var lastSeenVersion: String?
     public var iCloudSync: Bool = false
+    public var alwaysPlain: Bool = false
+    public var showMenuBarIcon: Bool = true
+    public var retention: Retention = .forever
+    public var linkPreviews: Bool = false
 
     public init() {}
 
@@ -47,6 +60,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         onboarded = try c.decodeIfPresent(Bool.self, forKey: .onboarded) ?? def.onboarded
         lastSeenVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenVersion)
         iCloudSync = try c.decodeIfPresent(Bool.self, forKey: .iCloudSync) ?? def.iCloudSync
+        alwaysPlain = try c.decodeIfPresent(Bool.self, forKey: .alwaysPlain) ?? def.alwaysPlain
+        showMenuBarIcon = try c.decodeIfPresent(Bool.self, forKey: .showMenuBarIcon) ?? def.showMenuBarIcon
+        retention = try c.decodeIfPresent(Retention.self, forKey: .retention) ?? def.retention
+        linkPreviews = try c.decodeIfPresent(Bool.self, forKey: .linkPreviews) ?? def.linkPreviews
     }
 
     public static let capacityRange = 50...10_000

@@ -40,6 +40,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var syncState = SyncState()
     var syncing = false
     var confirming = false
+    var activity: NSUserActivity?
     static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev" }
     static var build: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev" }
 
@@ -66,6 +67,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(withTitle: "About Clipper", action: #selector(showAbout), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusMenu = menu
+        statusItem?.isVisible = model.settings.showMenuBarIcon
         statusItem?.button?.target = self
         statusItem?.button?.action = #selector(statusClicked)
         statusItem?.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -86,6 +88,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if hotkeys.registered != model.settings.hotkey, !hotkeys.register(model.settings.hotkey) {
                 NSLog("Clipper: could not register \(model.settings.hotkey.display)")
             }
+            statusItem?.isVisible = model.settings.showMenuBarIcon
             monitor.secretPolicy = model.settings.secretPolicy
             monitor.rules = CaptureRules(ignoredBundleIDs: Set(model.settings.ignoredBundleIDs))
             sounds.enabled = model.settings.playSounds
@@ -103,6 +106,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         monitor.onChange = { [weak self] in
             guard let self else { return }
             askModelAboutLatest()
+            fetchLinkTitleForLatest()
+            advertiseHandoff()
             if let latest = store.all.first {
                 sounds.play(.copy)
                 if latest.isSecret { osd.show("Secret copied. Hidden.", symbol: "lock.fill", hideFromSharing: model.settings.hideFromSharing) }
@@ -113,7 +118,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if model.settings.spotlightEnabled { applySpotlight() }
         }
         Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.purgeSecrets() }
+            MainActor.assumeIsolated { self?.purgeSecrets(); self?.purgeExpired() }
         }
         installPanelShortcuts()
         monitor.rules = CaptureRules(ignoredBundleIDs: Set(model.settings.ignoredBundleIDs))
@@ -184,6 +189,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if let c = e.charactersIgnoringModifiers {
                 if let n = Int(c), (1...9).contains(n) { model.pick(number: n); return nil }
                 if c == "y", let i = model.selected { model.onPreview?(i); return nil }
+                if c == "]" { model.cycleBoard(1); return nil }
+                if c == "[" { model.cycleBoard(-1); return nil }
             }
             return e
         }
@@ -198,6 +205,49 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 store.markSecret(item.id, byModel: true); PasteInjector.diag("model: marked a clip as secret"); model.refresh()
             }
         }
+    }
+
+    /// Applies the "keep history" setting: unpinned clips older than the chosen span are deleted.
+    func purgeExpired() {
+        guard let age = model.settings.retention.seconds else { return }
+        if store.purge(olderThan: age) > 0 { model.refresh() }
+    }
+
+    /// Opt-in: reads the page title of a newly copied public link so its card can show it.
+    func fetchLinkTitleForLatest() {
+        guard model.settings.linkPreviews, let item = store.all.first, item.kind == .link, !item.isSecret,
+              item.extras?["linkTitle"] == nil, let text = item.text, let url = LinkPreview.fetchable(text) else { return }
+        let cfg = URLSessionConfiguration.ephemeral; cfg.timeoutIntervalForRequest = 6; cfg.httpCookieStorage = nil
+        var req = URLRequest(url: url); req.setValue("text/html", forHTTPHeaderField: "Accept")
+        let id = item.id
+        URLSession(configuration: cfg).dataTask(with: req) { data, resp, _ in
+            guard let data, (resp as? HTTPURLResponse)?.statusCode == 200,
+                  let html = String(data: data.prefix(200_000), encoding: .utf8) ?? String(data: data.prefix(200_000), encoding: .isoLatin1),
+                  let title = LinkPreview.title(fromHTML: html) else { return }
+            Task { @MainActor in self.store.setLinkTitle(id, title); self.model.refresh() }
+        }.resume()
+    }
+
+    /// Handoff: the newest non-secret text clip is offered to other devices signed in to the same iCloud account.
+    func advertiseHandoff() {
+        guard let item = store.all.first(where: { !$0.isSecret }), let text = item.text, item.kind == .text || item.kind == .link else { return }
+        let a = NSUserActivity(activityType: "com.royelia.clipper.activity")
+        a.title = "Latest clip"; a.isEligibleForHandoff = true
+        a.userInfo = ["text": String(text.prefix(2000))]
+        a.becomeCurrent(); activity?.invalidate(); activity = a
+    }
+
+    func application(_ application: NSApplication, continue userActivity: NSUserActivity, restorationHandler: @escaping ([any NSUserActivityRestoring]) -> Void) -> Bool {
+        guard userActivity.activityType == "com.royelia.clipper.activity", let text = userActivity.userInfo?["text"] as? String else { return false }
+        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+        osd.show("Clip received from another device", symbol: "arrow.down.circle", hideFromSharing: model.settings.hideFromSharing)
+        return true
+    }
+
+    /// Opening Clipper again (Spotlight, Finder) shows the shelf, which is the way in when the menu bar icon is hidden.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if panel?.isVisible != true { toggle() }
+        return true
     }
 
     func purgeSecrets() {
@@ -323,7 +373,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
            target != Bundle.main.bundleIdentifier {
             model.log.record(.init(itemID: item.id, kind: item.kind, targetApp: target)); model.log.save(App.logURL)
         }
-        monitor.write(item, plain: plain)
+        monitor.write(item, plain: plain || model.settings.alwaysPlain)
         sounds.play(.paste)
         panel?.orderOut(nil)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {

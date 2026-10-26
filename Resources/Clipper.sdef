@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<dictionary title="Clipper Terminology">
+  <suite name="Clipper Suite" code="ClpR" description="Read and add clips from scripts and Shortcuts.">
+    <command name="latest clip" code="ClprLtst" description="The text of the most recent clip that is not a secret.">
+      <cocoa class="ClipperLatestClipCommand"/>
+      <result type="text"/>
+    </command>
+    <command name="clip at index" code="ClprIndx" description="The text of the clip at a position, 1 being the newest. Secrets are withheld.">
+      <cocoa class="ClipperClipAtIndexCommand"/>
+      <direct-parameter description="Position, starting at 1" type="integer"/>
+      <result type="text"/>
+    </command>
+    <command name="clip count" code="ClprCnt_" description="How many clips are saved.">
+      <cocoa class="ClipperClipCountCommand"/>
+      <result type="integer"/>
+    </command>
+    <command name="add clip" code="ClprAddC" description="Saves text as a new clip, optionally on a pinboard.">
+      <cocoa class="ClipperAddClipCommand"/>
+      <direct-parameter description="The text to save" type="text"/>
+      <parameter name="to pinboard" code="ClpB" description="Pinboard name; created if it does not exist" type="text" optional="yes">
+        <cocoa key="pinboardName"/>
+      </parameter>
+      <result type="boolean"/>
+    </command>
+    <command name="create pinboard" code="ClprNewB" description="Creates a pinboard.">
+      <cocoa class="ClipperCreatePinboardCommand"/>
+      <direct-parameter description="Pinboard name" type="text"/>
+      <result type="boolean"/>
+    </command>
+  </suite>
+</dictionary>

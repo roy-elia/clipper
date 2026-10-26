@@ -107,7 +107,20 @@ struct SettingsView: View {
                 Toggle("Play sounds", isOn: Binding(get: { model.settings.playSounds }, set: { v in model.updateSettings { $0.playSounds = v } }))
                     .accessibilityIdentifier("settings.sounds")
             }
+            Section("Behaviour") {
+                Toggle("Always paste as plain text", isOn: Binding(get: { model.settings.alwaysPlain }, set: { v in model.updateSettings { $0.alwaysPlain = v } }))
+                    .accessibilityIdentifier("settings.alwaysPlain")
+                Toggle("Show in menu bar", isOn: Binding(get: { model.settings.showMenuBarIcon }, set: { v in model.updateSettings { $0.showMenuBarIcon = v } }))
+                    .accessibilityIdentifier("settings.menuBar")
+                Text("With the icon hidden, open Clipper again from Spotlight or Finder, or use the hotkey, to show the shelf.").font(.caption).foregroundStyle(.secondary)
+                Toggle("Fetch page titles for copied links", isOn: Binding(get: { model.settings.linkPreviews }, set: { v in model.updateSettings { $0.linkPreviews = v } }))
+                    .accessibilityIdentifier("settings.linkPreviews")
+                Text("Sends a request to the link's site when you copy it. Off by default.").font(.caption).foregroundStyle(.secondary)
+            }
             Section("History") {
+                Picker("Keep history", selection: Binding(get: { model.settings.retention }, set: { v in model.updateSettings { $0.retention = v } })) {
+                    ForEach(Retention.allCases, id: \.self) { Text($0.label).tag($0) }
+                }.accessibilityIdentifier("settings.retention")
                 LabeledContent("Keep up to") {
                     HStack {
                         Slider(value: Binding(get: { Double(model.settings.historyCapacity) },

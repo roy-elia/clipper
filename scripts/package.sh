@@ -8,6 +8,7 @@ rm -rf "${APP:?}"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/Clipper "$APP/Contents/MacOS/Clipper"
 cp .build/release/clipper-mcp-stdio "$APP/Contents/MacOS/clipper-mcp-stdio"
+cp Resources/Clipper.sdef "$APP/Contents/Resources/Clipper.sdef"
 BUILD=$(git rev-parse --short HEAD)
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -17,7 +18,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>com.royelia.clipper</string>
   <key>CFBundleName</key><string>Clipper</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.2.0</string>
+  <key>CFBundleShortVersionString</key><string>0.3.0</string>
   <key>CFBundleVersion</key><string>$BUILD</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
@@ -25,6 +26,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleURLName</key><string>com.royelia.clipper</string>
     <key>CFBundleURLSchemes</key><array><string>clipper</string></array>
   </dict></array>
+  <key>NSAppleScriptEnabled</key><true/>
+  <key>OSAScriptingDefinition</key><string>Clipper.sdef</string>
+  <key>NSUserActivityTypes</key><array><string>com.royelia.clipper.activity</string></array>
   <key>NSHumanReadableCopyright</key><string>Personal build</string>
 </dict></plist>
 PLIST

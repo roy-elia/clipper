@@ -39,6 +39,39 @@ public final class HistoryStore: @unchecked Sendable {
         lock.withLock { if items.contains(where: { $0.id == id }) { tombstones[id] = Date() }; items.removeAll { $0.id == id }; persist() }
     }
 
+    /// Deletes unpinned clips older than `age` seconds, recording tombstones. Returns how many were removed.
+    @discardableResult
+    public func purge(olderThan age: TimeInterval, now: Date = Date()) -> Int {
+        lock.withLock {
+            let doomed = items.filter { $0.pinboard == nil && now.timeIntervalSince($0.createdAt) >= age }
+            guard !doomed.isEmpty else { return 0 }
+            for i in doomed { tombstones[i.id] = now }
+            let ids = Set(doomed.map(\.id))
+            items.removeAll { ids.contains($0.id) }
+            persist(); return doomed.count
+        }
+    }
+
+    /// Puts a second, independent copy of a clip at the top. Its checksum is made unique so it is not collapsed back.
+    @discardableResult
+    public func duplicate(_ id: UUID) -> ClipItem? {
+        lock.withLock {
+            guard var c = items.first(where: { $0.id == id }) else { return nil }
+            c.id = UUID(); c.pinboard = nil; c.createdAt = Date(); c.modifiedAt = Date()
+            c.checksum += "#copy-" + c.id.uuidString
+            items.insert(c, at: 0); trim(); persist(); return c
+        }
+    }
+
+    /// Stores a fetched page title for a link clip.
+    public func setLinkTitle(_ id: UUID, _ title: String) {
+        lock.withLock {
+            guard let i = items.firstIndex(where: { $0.id == id }) else { return }
+            var e = items[i].extras ?? [:]; e["linkTitle"] = Data(title.utf8); items[i].extras = e
+            items[i].modifiedAt = Date(); persist()
+        }
+    }
+
     public func item(_ id: UUID) -> ClipItem? { lock.withLock { items.first { $0.id == id } } }
 
     /// Edits the text of a text-like clip, recomputing its checksum and title. Returns nil for unknown or image clips.

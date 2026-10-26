@@ -48,6 +48,16 @@ final class ShelfModel: ObservableObject {
     var selected: ClipItem? { items.indices.contains(selection) ? items[selection] : nil }
     func pickSelected(plain: Bool) { if let i = selected { onPick?(i, plain) } }
     func pick(number n: Int) { if items.indices.contains(n - 1) { onPick?(items[n - 1], false) } }
+    /// ⌘] and ⌘[ : step through Picks, History and the pinboards in tab order.
+    func cycleBoard(_ d: Int) {
+        let order: [String?] = [nil] + boards.map { Optional($0) }
+        let current = order.firstIndex { $0 == board } ?? 0
+        let tabs = order.count + 1                      // Picks is position 0
+        let pos = picks ? 0 : current + 1
+        let next = ((pos + d) % tabs + tabs) % tabs
+        if next == 0 { picks = true; board = nil } else { picks = false; board = order[next - 1] }
+        selection = 0; refresh()
+    }
     func deleteSelected() { if let i = selected { delete(i) } }
 
     func pin(_ item: ClipItem, to name: String?) { store.setPinboard(name, for: item.id); refresh() }
@@ -165,6 +175,8 @@ struct ShelfView: View {
         case .delete where cmd: model.deleteSelected(); return .handled
         default: break
         }
+        if cmd, p.characters == "]" { model.cycleBoard(1); return .handled }
+        if cmd, p.characters == "[" { model.cycleBoard(-1); return .handled }
         if cmd, let n = Int(p.characters), (1...9).contains(n) { model.pick(number: n); return .handled }
         if cmd, p.characters == "y", let i = model.selected { model.onPreview?(i); return .handled }
         return .ignored
@@ -190,6 +202,7 @@ struct ShelfView: View {
         Button("Paste as Plain Text") { model.onPick?(item, true) }
         Button("Preview") { model.onPreview?(item) }
         Button("Add to Paste Stack") { model.stack.push(item) }
+        Button("Duplicate") { model.store.duplicate(item.id); model.refresh() }
         if !item.isSecret { Button("Share…") { model.onShare?(item) } }
         if item.isSecret { Button("Not a Secret") { model.store.markSecret(item.id, false); model.refresh() } }
         else if item.kind == .text { Button("Mark as Secret") { model.store.markSecret(item.id); model.refresh() } }
@@ -298,7 +311,12 @@ struct Card: View {
         } else if item.kind == .link {
             VStack(alignment: .leading, spacing: 4) {
                 Image(systemName: "link").font(.title3).foregroundStyle(.secondary)
-                Text(item.text ?? item.title).font(.callout).lineLimit(5)
+                if let t = item.extras?["linkTitle"].flatMap({ String(data: $0, encoding: .utf8) }) {
+                    Text(t).font(.callout.weight(.semibold)).lineLimit(3)
+                    Text(item.text ?? "").font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                } else {
+                    Text(item.text ?? item.title).font(.callout).lineLimit(5)
+                }
             }
         } else {
             Text(item.text ?? item.title).font(.system(size: 14)).lineLimit(8)
