@@ -61,4 +61,17 @@ import Foundation
         let old = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"playSounds":true}"#.utf8))
         #expect(old.pasteTarget == .activeApp && old.playSounds)
     }
+
+    @Test func undoDeleteRestoresInPlace() {
+        let s = HistoryStore()
+        let a = s.add(ClipItem(kind: .text, title: "a", text: "a", checksum: "a", createdAt: Date(timeIntervalSince1970: 100)))
+        let b = s.add(ClipItem(kind: .text, title: "b", text: "b", checksum: "b", createdAt: Date(timeIntervalSince1970: 200)))
+        _ = s.add(ClipItem(kind: .text, title: "c", text: "c", checksum: "c", createdAt: Date(timeIntervalSince1970: 300)))
+        s.delete(b.id)
+        #expect(s.changes(since: nil).contains { $0.id == b.id && $0.item == nil })
+        s.restore(b)
+        #expect(s.all.map(\.title) == ["c", "b", "a"])
+        #expect(!s.changes(since: nil).contains { $0.id == b.id && $0.item == nil })
+        _ = a
+    }
 }

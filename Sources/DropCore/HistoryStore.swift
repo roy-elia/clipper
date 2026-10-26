@@ -88,6 +88,17 @@ public final class HistoryStore: @unchecked Sendable {
     public func boardColor(_ name: String) -> String { lock.withLock { boardColors[name] ?? Self.boardPalette[0] } }
     public func setBoardColor(_ name: String, _ hex: String) { lock.withLock { boardColors[name] = hex; persist() } }
 
+    /// Puts back a clip removed by delete (undo): back in date order, and no longer recorded as deleted.
+    public func restore(_ item: ClipItem) {
+        lock.withLock {
+            guard !items.contains(where: { $0.id == item.id }) else { return }
+            tombstones[item.id] = nil
+            var c = item; c.modifiedAt = Date()
+            let at = items.firstIndex { $0.createdAt < c.createdAt } ?? items.count
+            items.insert(c, at: at); trim(); persist()
+        }
+    }
+
     public func item(_ id: UUID) -> ClipItem? { lock.withLock { items.first { $0.id == id } } }
 
     /// Edits the text of a text-like clip, recomputing its checksum and title. Returns nil for unknown or image clips.

@@ -69,7 +69,10 @@ final class ShelfModel: ObservableObject {
     func deleteSelected() { if let i = selected { delete(i) } }
 
     func pin(_ item: ClipItem, to name: String?) { store.setPinboard(name, for: item.id); refresh() }
-    func delete(_ item: ClipItem) { store.delete(item.id); stack.remove(item.id); refresh() }
+    @Published var lastDeleted: ClipItem?
+    func delete(_ item: ClipItem) { lastDeleted = item; store.delete(item.id); stack.remove(item.id); refresh() }
+    /// ⌘Z after a delete puts the clip back.
+    @discardableResult func undoDelete() -> Bool { guard let i = lastDeleted else { return false }; store.restore(i); lastDeleted = nil; refresh(); return true }
     func addBoard(_ name: String) { if store.createPinboard(name) { board = name.trimmingCharacters(in: .whitespaces); refresh() } }
     func renameBoard(_ old: String, _ new: String) { if store.renamePinboard(old, to: new) { board = new; refresh() } }
     func boardColor(_ name: String) -> Color { Color(hex: store.boardColor(name)) ?? .red }

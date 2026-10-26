@@ -40,6 +40,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var syncState = SyncState()
     var syncing = false
     var confirming = false
+    var lastOtherApp: NSRunningApplication?
     var pause = CapturePause()
     var shortcutsWindow: NSWindow?
     var activity: NSUserActivity?
@@ -139,6 +140,15 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.onRenameBoard = { [weak self] name in self?.renameBoard(name) }
         model.onCommand = { [weak self] c in self?.run(c) }
         installModifierWatch()
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let pid = app?.processIdentifier
+            MainActor.assumeIsolated {
+                guard let pid, pid != ProcessInfo.processInfo.processIdentifier else { return }
+                self?.lastOtherApp = NSRunningApplication(processIdentifier: pid)
+            }
+        }
+        lastOtherApp = NSWorkspace.shared.frontmostApplication.flatMap { $0.processIdentifier == ProcessInfo.processInfo.processIdentifier ? nil : $0 }
         syncState = (try? Data(contentsOf: App.syncStateURL)).flatMap { try? JSONDecoder().decode(SyncState.self, from: $0) } ?? SyncState()
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.syncNow() } }
         DispatchQueue.main.async { [weak self] in self?.showFirstRunWindows() }
@@ -302,6 +312,13 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // Space previews the selected clip while the search field is empty.
             if mods.isEmpty, e.keyCode == 49, model.query.isEmpty, let i = model.selected { model.onPreview?(i); return nil }
             if mods == quickFlag, let c = e.charactersIgnoringModifiers, let n = Int(c), (1...9).contains(n) { model.pick(number: n); return nil }
+            // ⌫ deletes the selected clip while the search field is empty; ⌘Z puts it back.
+            if mods.isEmpty, e.keyCode == 51 || e.keyCode == 117, model.query.isEmpty, let i = model.selected {
+                model.delete(i); osd.show("Deleted. ⌘Z to undo", symbol: "trash", hideFromSharing: model.settings.hideFromSharing); return nil
+            }
+            if mods == .command, e.charactersIgnoringModifiers == "z", model.query.isEmpty, model.lastDeleted != nil {
+                model.undoDelete(); osd.show("Restored", symbol: "arrow.uturn.backward", hideFromSharing: model.settings.hideFromSharing); return nil
+            }
             if mods == .command, e.keyCode == 123 { model.cycleBoard(-1); return nil }
             if mods == .command, e.keyCode == 124 { model.cycleBoard(1); return nil }
             guard mods == .command else { return e }
@@ -628,7 +645,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if panel?.isVisible == true { panel?.orderOut(nil); return }
         if let shelf = panel as? ShelfPanel {
             let front = NSWorkspace.shared.frontmostApplication
-            shelf.previousApp = front?.bundleIdentifier == Bundle.main.bundleIdentifier ? nil : front
+            // Opened from the menu bar or a link, Clipper is already in front: use the app that was before it.
+            shelf.previousApp = front?.bundleIdentifier == Bundle.main.bundleIdentifier ? lastOtherApp : front
             model.targetApp = shelf.previousApp?.bundleIdentifier
         }
         model.picks = model.settings.opensOnPicks && !PickRanker(log: model.log).rank(store.all, for: model.targetApp, limit: 1).isEmpty
