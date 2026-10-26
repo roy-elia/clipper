@@ -6,13 +6,14 @@ public final class HistoryStore: @unchecked Sendable {
     var items: [ClipItem] = []
     var boards: [String] = []
     var tombstones: [UUID: Date] = [:]
+    var boardColors: [String: String] = [:]
     private let url: URL?
     public var capacity: Int
 
     public init(url: URL? = nil, capacity: Int = 1000) {
         self.url = url; self.capacity = capacity
         if let url, let d = try? Data(contentsOf: url) {
-            if let env = try? JSONDecoder.iso.decode(Envelope.self, from: d) { items = env.items; boards = env.boards; tombstones = env.tombstones ?? [:] }
+            if let env = try? JSONDecoder.iso.decode(Envelope.self, from: d) { items = env.items; boards = env.boards; tombstones = env.tombstones ?? [:]; boardColors = env.boardColors ?? [:] }
             else if let legacy = try? JSONDecoder.iso.decode([ClipItem].self, from: d) { items = legacy }
         }
     }
@@ -71,6 +72,21 @@ public final class HistoryStore: @unchecked Sendable {
             items[i].modifiedAt = Date(); persist()
         }
     }
+
+    /// Gives a clip its own name; an empty name clears it.
+    public func rename(_ id: UUID, to title: String?) {
+        let t = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        lock.withLock {
+            guard let i = items.firstIndex(where: { $0.id == id }) else { return }
+            items[i].customTitle = (t?.isEmpty ?? true) ? nil : String(t!.prefix(80))
+            items[i].modifiedAt = Date(); persist()
+        }
+    }
+
+    /// Pinboard colours, as hex. New pinboards take the next colour from a fixed set.
+    public static let boardPalette = ["#FF5F57", "#FFB340", "#FFD84D", "#34C759", "#30B0C7", "#3D7BFF", "#AF52DE", "#FF6FAF"]
+    public func boardColor(_ name: String) -> String { lock.withLock { boardColors[name] ?? Self.boardPalette[0] } }
+    public func setBoardColor(_ name: String, _ hex: String) { lock.withLock { boardColors[name] = hex; persist() } }
 
     public func item(_ id: UUID) -> ClipItem? { lock.withLock { items.first { $0.id == id } } }
 
@@ -138,6 +154,7 @@ public final class HistoryStore: @unchecked Sendable {
         let n = name.trimmingCharacters(in: .whitespaces)
         return lock.withLock {
             guard !n.isEmpty, !boards.contains(n), !items.contains(where: { $0.pinboard == n }) else { return false }
+            if boardColors[n] == nil { boardColors[n] = Self.boardPalette[boards.count % Self.boardPalette.count] }
             boards.append(n); persist(); return true
         }
     }
@@ -149,6 +166,7 @@ public final class HistoryStore: @unchecked Sendable {
             let existing = Set(boards).union(items.compactMap(\.pinboard))
             guard !n.isEmpty, existing.contains(old), !existing.contains(n) else { return false }
             boards = boards.map { $0 == old ? n : $0 }
+            if let c = boardColors.removeValue(forKey: old) { boardColors[n] = c }
             for i in items.indices where items[i].pinboard == old { items[i].pinboard = n }
             persist(); return true
         }
@@ -158,6 +176,7 @@ public final class HistoryStore: @unchecked Sendable {
     public func deletePinboard(_ name: String) {
         lock.withLock {
             boards.removeAll { $0 == name }
+            boardColors[name] = nil
             for i in items.indices where items[i].pinboard == name { items[i].pinboard = nil }
             persist()
         }
@@ -183,7 +202,7 @@ public final class HistoryStore: @unchecked Sendable {
     }
 
     func persist() {
-        guard let url, let d = try? JSONEncoder.iso.encode(Envelope(items: items, boards: boards, tombstones: tombstones)) else { return }
+        guard let url, let d = try? JSONEncoder.iso.encode(Envelope(items: items, boards: boards, tombstones: tombstones, boardColors: boardColors)) else { return }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? d.write(to: url, options: .atomic)
         // Clipboard history can hold secrets: owner-only file and folder.
@@ -192,7 +211,7 @@ public final class HistoryStore: @unchecked Sendable {
     }
 }
 
-struct Envelope: Codable { var items: [ClipItem]; var boards: [String]; var tombstones: [UUID: Date]? }
+struct Envelope: Codable { var items: [ClipItem]; var boards: [String]; var tombstones: [UUID: Date]?; var boardColors: [String: String]? }
 
 extension JSONEncoder { static var iso: JSONEncoder { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e } }
 extension JSONDecoder { static var iso: JSONDecoder { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d } }

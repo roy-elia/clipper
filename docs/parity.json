@@ -1,0 +1,268 @@
+[
+ {
+  "feature": "Bottom shelf, full width, opens on hotkey or menu bar click, closes on click away",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "done",
+  "check": "open via hotkey + status click, click outside",
+  "passes": true
+ },
+ {
+  "feature": "Shelf proportions: ~332 pt tall, ~234 pt square cards, single control row",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "partial",
+  "check": "snapshot + live window bounds",
+  "passes": false
+ },
+ {
+  "feature": "Card: app-coloured header, kind, age, oversized app icon, body fade, centred detail footer",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "partial",
+  "check": "snapshot",
+  "passes": false
+ },
+ {
+  "feature": "Images fill card body over a checkerboard",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "missing",
+  "check": "snapshot with image fixture",
+  "passes": false
+ },
+ {
+  "feature": "Selection ring that greys out when the shelf is not key",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "partial",
+  "check": "snapshot key/non-key",
+  "passes": false
+ },
+ {
+  "feature": "Quick-paste numbers shown only while the modifier is held",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "missing",
+  "check": "hold ⌘ live, badges appear",
+  "passes": false
+ },
+ {
+  "feature": "Search as icon that expands; typing searches",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "partial",
+  "check": "live: type text, list filters",
+  "passes": false
+ },
+ {
+  "feature": "Filter popover: Type, App, Pinboard chips",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "missing",
+  "check": "press filter, choose app, list filters",
+  "passes": false
+ },
+ {
+  "feature": "Pinboards with colours; ⌘→/⌘← switch pinboards",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "partial",
+  "check": "unit test colours; live ⌘→",
+  "passes": false
+ },
+ {
+  "feature": "⋯ menu: About, New Text Item, Settings, Help, Pause ▸ with durations, Quit",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "missing",
+  "check": "AX read of menu",
+  "passes": false
+ },
+ {
+  "feature": "Timed pause (15 min, 30 min, 1 h, 3 h, 8 h)",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "missing",
+  "check": "unit test resume time; live menu",
+  "passes": false
+ },
+ {
+  "feature": "Card menu: Paste to <app>, Plain, Copy, Edit, Rename, Delete, Pin, Preview (Space), Share",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "partial",
+  "check": "AX read of card menu",
+  "passes": false
+ },
+ {
+  "feature": "Rename a card (custom title)",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "missing",
+  "check": "unit test + live AppleScript check",
+  "passes": false
+ },
+ {
+  "feature": "Copy only (⌘C on a card)",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "missing",
+  "check": "live: clipboard holds clip, nothing pasted",
+  "passes": false
+ },
+ {
+  "feature": "Paste Items: To active app / To clipboard setting",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "missing",
+  "check": "live: to-clipboard mode does not paste",
+  "passes": false
+ },
+ {
+  "feature": "Always paste as plain text",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "done",
+  "check": "settings toggle; monitor.write plain",
+  "passes": true
+ },
+ {
+  "feature": "Plain text modifier (⇧ with click or Return)",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "partial",
+  "check": "live ⇧-click",
+  "passes": false
+ },
+ {
+  "feature": "Keep history Day/Week/Month/Year/Forever + Erase History with confirmation",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "done",
+  "check": "unit tests + live alert",
+  "passes": true
+ },
+ {
+  "feature": "Ignore confidential / transient content toggles",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "missing",
+  "check": "unit test rules",
+  "passes": false
+ },
+ {
+  "feature": "Ignore applications list",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "done",
+  "check": "existing",
+  "passes": true
+ },
+ {
+  "feature": "Show during screen sharing toggle",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "done",
+  "check": "existing",
+  "passes": true
+ },
+ {
+  "feature": "Generate link previews (opt-in)",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "done",
+  "check": "live example.com title",
+  "passes": true
+ },
+ {
+  "feature": "Intelligent suggestions (on-device)",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "done",
+  "check": "Picks tab",
+  "passes": true
+ },
+ {
+  "feature": "MCP server",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "done",
+  "check": "existing tests + live 401/tools",
+  "passes": true
+ },
+ {
+  "feature": "Shortcuts: ⇧⌘V shelf, ⇧⌘C stack, reset to defaults",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "partial",
+  "check": "settings shows recorder; reset button",
+  "passes": false
+ },
+ {
+  "feature": "Paste Stack",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "done",
+  "check": "existing",
+  "passes": true
+ },
+ {
+  "feature": "Open at login",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "done",
+  "check": "existing",
+  "passes": true
+ },
+ {
+  "feature": "Sound effects",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "done",
+  "check": "existing",
+  "passes": true
+ },
+ {
+  "feature": "Spotlight indexing",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "done",
+  "check": "existing",
+  "passes": true
+ },
+ {
+  "feature": "New Text Item ⌘N",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "done",
+  "check": "existing New Clip",
+  "passes": true
+ },
+ {
+  "feature": "Drag cards out; drop items in",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "done",
+  "check": "live earlier",
+  "passes": true
+ },
+ {
+  "feature": "Help: Getting Started, Keyboard Shortcuts",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "partial",
+  "check": "Keyboard Shortcuts window",
+  "passes": false
+ },
+ {
+  "feature": "iCloud sync",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "not_buildable",
+  "check": "needs CloudKit entitlement and second device to prove",
+  "passes": false
+ },
+ {
+  "feature": "Shared pinboards",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "not_buildable",
+  "check": "needs CloudKit sharing entitlement",
+  "passes": false
+ },
+ {
+  "feature": "Widgets",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "not_buildable",
+  "check": "WidgetKit extension needs Xcode",
+  "passes": false
+ },
+ {
+  "feature": "Siri & Shortcuts actions",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "not_buildable",
+  "check": "App Intents metadata processor needs Xcode; AppleScript commands instead",
+  "passes": false
+ },
+ {
+  "feature": "Run in background",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "not_applicable",
+  "check": "Clipper is a menu bar agent and always runs",
+  "passes": false
+ },
+ {
+  "feature": "Subscription",
+  "paste_behaviour": "see paste-behaviour.md",
+  "clipper_status": "not_applicable",
+  "check": "personal build",
+  "passes": false
+ }
+]

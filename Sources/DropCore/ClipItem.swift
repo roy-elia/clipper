@@ -24,6 +24,8 @@ public struct ClipItem: Codable, Sendable, Equatable, Identifiable {
     public var modelFlagged: Bool?
     /// Last change time, used to settle sync conflicts (newest wins). Nil on clips saved before sync existed.
     public var modifiedAt: Date?
+    /// A name the user gave the clip (Rename); shown instead of the kind on the card.
+    public var customTitle: String?
 
     public init(id: UUID = UUID(), kind: ClipKind, title: String, text: String? = nil, data: Data? = nil,
                 sourceBundleID: String? = nil, checksum: String, createdAt: Date = Date(), pinboard: String? = nil,

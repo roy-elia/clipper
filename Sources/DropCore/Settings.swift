@@ -16,6 +16,24 @@ public enum Retention: String, Codable, CaseIterable, Sendable {
     public var label: String { rawValue == "forever" ? "Forever" : "1 \(rawValue)" }
 }
 
+/// What picking a clip does: paste into the front app, or only put it on the clipboard.
+public enum PasteTarget: String, Codable, CaseIterable, Sendable { case activeApp, clipboard }
+
+/// The key held with 1…9 to paste a clip by position.
+public enum QuickModifier: String, Codable, CaseIterable, Sendable {
+    case command, option, control
+    public var symbol: String { switch self { case .command: "⌘"; case .option: "⌥"; case .control: "⌃" } }
+}
+
+/// A capture pause that may end on its own.
+public struct CapturePause: Equatable, Sendable {
+    public var until: Date?          // nil while paused means "until resumed"
+    public var active: Bool
+    public init(active: Bool = false, until: Date? = nil) { self.active = active; self.until = until }
+    public static let durations: [(String, TimeInterval)] = [("15 minutes", 900), ("30 minutes", 1800), ("1 hour", 3600), ("3 hours", 10_800), ("8 hours", 28_800)]
+    public func isPaused(at now: Date = Date()) -> Bool { active && (until.map { now < $0 } ?? true) }
+}
+
 public struct AppSettings: Codable, Equatable, Sendable {
     public var hotkey: Hotkey = .default
     public var historyCapacity: Int = 1000
@@ -29,7 +47,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var opensOnPicks: Bool = true
     public var smartModel: Bool = true
     public var hideFromSharing: Bool = true
-    public var stackHotkey: Hotkey = Hotkey(keyCode: 9, modifiers: Hotkey.cmd | Hotkey.control)
+    public var stackHotkey: Hotkey = Hotkey(keyCode: 8, modifiers: Hotkey.cmd | Hotkey.shift)
     public var onboarded: Bool = false
     public var lastSeenVersion: String?
     public var iCloudSync: Bool = false
@@ -37,8 +55,17 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var showMenuBarIcon: Bool = true
     public var retention: Retention = .forever
     public var linkPreviews: Bool = false
+    public var pasteTarget: PasteTarget = .activeApp
+    public var ignoreConfidential: Bool = true
+    public var ignoreTransient: Bool = true
+    public var quickModifier: QuickModifier = .command
 
     public init() {}
+
+    /// Shelf ⇧⌘V and Paste Stack ⇧⌘C.
+    public mutating func resetShortcuts() {
+        let d = AppSettings(); hotkey = d.hotkey; stackHotkey = d.stackHotkey; quickModifier = d.quickModifier
+    }
 
     // Older settings files lack newer keys; fall back to defaults instead of discarding everything.
     public init(from d: Decoder) throws {
@@ -64,6 +91,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         showMenuBarIcon = try c.decodeIfPresent(Bool.self, forKey: .showMenuBarIcon) ?? def.showMenuBarIcon
         retention = try c.decodeIfPresent(Retention.self, forKey: .retention) ?? def.retention
         linkPreviews = try c.decodeIfPresent(Bool.self, forKey: .linkPreviews) ?? def.linkPreviews
+        pasteTarget = try c.decodeIfPresent(PasteTarget.self, forKey: .pasteTarget) ?? def.pasteTarget
+        ignoreConfidential = try c.decodeIfPresent(Bool.self, forKey: .ignoreConfidential) ?? def.ignoreConfidential
+        ignoreTransient = try c.decodeIfPresent(Bool.self, forKey: .ignoreTransient) ?? def.ignoreTransient
+        quickModifier = try c.decodeIfPresent(QuickModifier.self, forKey: .quickModifier) ?? def.quickModifier
     }
 
     public static let capacityRange = 50...10_000
