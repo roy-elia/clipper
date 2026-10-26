@@ -441,7 +441,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func toggle() {
         if panel == nil {
-            let p = ShelfPanel(contentRect: NSRect(x: 0, y: 0, width: 900, height: 300),
+            let p = ShelfPanel(contentRect: NSRect(x: 0, y: 0, width: 900, height: 384),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             p.isFloatingPanel = true; p.hasShadow = false
             p.backgroundColor = .clear; p.isOpaque = false
@@ -465,7 +465,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
         if let v = screen?.visibleFrame, let p = panel {
-            let inset: CGFloat = 12, h: CGFloat = 300
+            let inset: CGFloat = 12, h: CGFloat = 384
             let end = NSRect(x: v.minX + inset, y: v.minY + inset, width: v.width - inset * 2, height: h)
             let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             p.setFrame(reduce ? end : end.offsetBy(dx: 0, dy: -(h + inset)), display: false)
