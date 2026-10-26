@@ -64,6 +64,16 @@ public final class HistoryStore: @unchecked Sendable {
         }
     }
 
+    /// Stores a fetched preview image for a link clip (small JPEG/PNG data only).
+    public func setLinkImage(_ id: UUID, _ data: Data) {
+        guard data.count <= 1_500_000 else { return }
+        lock.withLock {
+            guard let i = items.firstIndex(where: { $0.id == id }) else { return }
+            var e = items[i].extras ?? [:]; e["linkImage"] = data; items[i].extras = e
+            items[i].modifiedAt = Date(); persist()
+        }
+    }
+
     /// Stores a fetched page title for a link clip.
     public func setLinkTitle(_ id: UUID, _ title: String) {
         lock.withLock {

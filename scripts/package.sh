@@ -29,6 +29,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSAppleScriptEnabled</key><true/>
   <key>OSAScriptingDefinition</key><string>Clipper.sdef</string>
   <key>NSUserActivityTypes</key><array><string>com.royelia.clipper.activity</string></array>
+  <key>UTExportedTypeDeclarations</key><array><dict>
+    <key>UTTypeIdentifier</key><string>com.royelia.clipper.clip-id</string>
+    <key>UTTypeDescription</key><string>Clipper clip</string>
+    <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+  </dict></array>
   <key>NSHumanReadableCopyright</key><string>Personal build</string>
 </dict></plist>
 PLIST

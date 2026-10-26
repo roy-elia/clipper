@@ -41,6 +41,12 @@ public extension ClipItem {
     /// What a plain-text paste inserts: no formatting, files become their paths.
     var plainText: String? { text }
     var isSecret: Bool { sensitive == true }
-    var isRich: Bool { !(extras?.isEmpty ?? true) }
+    /// Formatting kept from the source app (rtf), not the preview data Clipper adds itself.
+    var isRich: Bool { (extras ?? [:]).keys.contains { $0 != "linkTitle" && $0 != "linkImage" } }
+    /// Pasting several selected clips at once: their text, one per line, in the order selected. Secrets and
+    /// clips without text (images) are left out.
+    static func joinedText(_ items: [ClipItem]) -> String {
+        items.filter { !$0.isSecret }.compactMap { $0.text }.joined(separator: "\n")
+    }
     var fileNames: [String] { (fileURLs ?? []).map { URL(string: $0)?.lastPathComponent ?? $0 } }
 }

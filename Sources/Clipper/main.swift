@@ -135,7 +135,19 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         stackHotkeys.register(model.settings.stackHotkey)
         model.onShare = { [weak self] item in self?.share(item) }
         model.onCopy = { [weak self] item in self?.copyOnly(item) }
-        model.onEdit = { [weak self] item in self?.preview(item) }
+        model.onEdit = { [weak self] item in self?.panel?.orderOut(nil); self?.preview(item, edit: true) }
+        model.onWritingTools = { [weak self] item in
+            guard let self else { return }
+            panel?.orderOut(nil); preview(item, edit: true); NSApp.activate()
+            // Apple's Writing Tools work on the focused editor (macOS 15.2+).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { NSApp.sendAction(Selector(("showWritingTools:")), to: nil, from: nil) }
+        }
+        model.onPickMany = { [weak self] items, plain in self?.pickMany(items, plain: plain) }
+        model.onDeleted = { [weak self] n in
+            guard let self else { return }
+            osd.show(n == 1 ? "Deleted. ⌘Z to undo" : "Deleted \(n) clips. ⌘Z to undo", symbol: "trash", hideFromSharing: model.settings.hideFromSharing)
+        }
+        model.onSyncNow = { [weak self] in self?.syncNow() }
         model.onRename = { [weak self] item in self?.renameClip(item) }
         model.onRenameBoard = { [weak self] name in self?.renameBoard(name) }
         model.onCommand = { [weak self] c in self?.run(c) }
@@ -186,7 +198,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         pick(item, plain: false)
     }
 
-    func preview(_ item: ClipItem) {
+    func preview(_ item: ClipItem, edit: Bool = false) {
         if previewPanel == nil {
             let p = ShelfPanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 320),
                                styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -195,7 +207,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         previewPanel?.contentView = NSHostingView(rootView: PreviewView(item: item, onSave: { [weak self] text in
             guard let self else { return }
             if let updated = store.updateText(item.id, to: text) { model.refresh(); preview(updated) }
-        }))
+        }, startEditing: edit))
         applyPrivacy()
         previewPanel?.center(); previewPanel?.makeKeyAndOrderFront(nil)
     }
@@ -229,6 +241,15 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             }
         }
+    }
+
+    /// Several cards at once: their text, one per line, pasted (or copied) as one clip.
+    func pickMany(_ items: [ClipItem], plain: Bool) {
+        let text = ClipItem.joinedText(items)
+        guard !text.isEmpty else { if let f = items.first { pick(f, plain: plain) }; return }
+        let combined = ClipItem(kind: .text, title: String(text.prefix(120)), text: text, checksum: CaptureRules.checksum(string: text, data: nil))
+        model.marked = []
+        pick(combined, plain: true)
     }
 
     /// Copy without pasting: the clip goes on the clipboard and the shelf closes.
@@ -306,16 +327,18 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func installPanelShortcuts() {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
-            guard let self, let panel, panel.isVisible, e.window === panel else { return e }
+            guard let self, let panel, panel.isVisible, e.window === panel, !model.namingBoard else { return e }
             let mods = e.modifierFlags.intersection([.command, .option, .control, .shift])
             // ⇧Return pastes as plain text; the text field would otherwise turn it into a line break.
-            if mods == .shift, e.keyCode == 36 || e.keyCode == 76 { model.pickSelected(plain: true); return nil }
+            if mods == .shift, e.keyCode == 36 || e.keyCode == 76 { model.pickTargets(plain: true); return nil }
+            if mods.isEmpty, e.keyCode == 36 || e.keyCode == 76 { model.pickTargets(plain: false); return nil }
+            if mods.isEmpty, e.keyCode == 53, !model.marked.isEmpty { model.marked = []; return nil }
             // Space previews the selected clip while the search field is empty.
             if mods.isEmpty, e.keyCode == 49, model.query.isEmpty, let i = model.selected { model.onPreview?(i); return nil }
             if mods == quickFlag, let c = e.charactersIgnoringModifiers, let n = Int(c), (1...9).contains(n) { model.pick(number: n); return nil }
             // ⌫ deletes the selected clip while the search field is empty; ⌘Z puts it back.
             if mods.isEmpty, e.keyCode == 51 || e.keyCode == 117, model.query.isEmpty, let i = model.selected {
-                model.delete(i); osd.show("Deleted. ⌘Z to undo", symbol: "trash", hideFromSharing: model.settings.hideFromSharing); return nil
+                _ = i; model.deleteTargets(); return nil
             }
             if mods == .command, e.charactersIgnoringModifiers == "z", model.query.isEmpty, model.lastDeleted != nil {
                 model.undoDelete(); osd.show("Restored", symbol: "arrow.uturn.backward", hideFromSharing: model.settings.hideFromSharing); return nil
@@ -323,10 +346,13 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if mods == .command, e.keyCode == 123 { model.cycleBoard(-1); return nil }
             if mods == .command, e.keyCode == 124 { model.cycleBoard(1); return nil }
             guard mods == .command else { return e }
-            if e.keyCode == 51 { model.deleteSelected(); return nil }
+            if e.keyCode == 51 { model.deleteTargets(); return nil }
             if let c = e.charactersIgnoringModifiers {
                 if c == "c", model.query.isEmpty || panel.firstResponder as? NSTextView == nil, let i = model.selected { copyOnly(i); return nil }
-                if c == "e", let i = model.selected { preview(i); return nil }
+                if c == "e", let i = model.selected { panel.orderOut(nil); preview(i, edit: true); return nil }
+                if c == "f" { model.focusTick += 1; return nil }
+                if c == "g", let i = model.selected, let b = i.pinboard { model.picks = false; model.board = b; model.refresh(); return nil }
+                if c == "a", model.query.isEmpty { model.marked = model.items.map(\.id); return nil }
                 if c == "r", let i = model.selected { renameClip(i); return nil }
                 if c == "y", let i = model.selected { model.onPreview?(i); return nil }
                 if c == "]" { model.cycleBoard(1); return nil }
@@ -364,7 +390,14 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let data, (resp as? HTTPURLResponse)?.statusCode == 200,
                   let html = String(data: data.prefix(200_000), encoding: .utf8) ?? String(data: data.prefix(200_000), encoding: .isoLatin1),
                   let title = LinkPreview.title(fromHTML: html) else { return }
+            let image = LinkPreview.imageURL(fromHTML: html, base: url).flatMap { LinkPreview.fetchable($0.absoluteString) }
             Task { @MainActor in self.store.setLinkTitle(id, title); self.model.refresh() }
+            guard let image else { return }
+            URLSession(configuration: cfg).dataTask(with: image) { d, r, _ in
+                guard let d, d.count < 5_000_000, (r as? HTTPURLResponse)?.statusCode == 200, let img = NSImage(data: d),
+                      let small = LinkPreview.thumbnailJPEG(img) else { return }
+                Task { @MainActor in self.store.setLinkImage(id, small); self.model.refresh() }
+            }.resume()
         }.resume()
     }
 
@@ -417,14 +450,14 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func syncNow() {
         guard model.settings.iCloudSync, CloudKitTransport.available, !syncing else { return }
-        syncing = true
+        syncing = true; model.syncing = true
         let transport = CloudKitTransport(); let store = store; var state = syncState
         Task.detached {
             do { let r = try await SyncCoordinator.sync(store, state: &state, transport: transport); PasteInjector.diag("sync: pushed \(r.pushed) pulled \(r.pulled)") }
             catch { PasteInjector.diag("sync failed: \(error.localizedDescription)") }
             let done = state
             await MainActor.run {
-                self.syncState = done; self.syncing = false
+                self.syncState = done; self.syncing = false; self.model.syncing = false; self.model.lastSynced = Date()
                 if let d = try? JSONEncoder().encode(done) { try? d.write(to: App.syncStateURL, options: .atomic) }
                 self.model.refresh()
             }

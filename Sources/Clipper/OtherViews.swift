@@ -4,13 +4,22 @@ import DropCore
 struct PreviewView: View {
     let item: ClipItem
     var onSave: (String) -> Void = { _ in }
+    var startEditing = false
+    @FocusState private var editorFocused: Bool
     @State private var revealed = false
     @State private var editing = false
     @State private var draft = ""
+    init(item: ClipItem, onSave: @escaping (String) -> Void = { _ in }, startEditing: Bool = false) {
+        self.item = item; self.onSave = onSave; self.startEditing = startEditing
+        let editable = item.kind == .text && item.data == nil && !item.isSecret
+        _editing = State(initialValue: startEditing && editable)
+        _draft = State(initialValue: startEditing && editable ? (item.text ?? "") : "")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(item.kind.rawValue.capitalized).font(.headline)
+                Text(item.customTitle ?? item.kind.rawValue.capitalized).font(.headline)
                 Spacer()
                 if item.kind == .text, item.data == nil, !item.isSecret || revealed {
                     if editing {
@@ -33,6 +42,7 @@ struct PreviewView: View {
                 } else if editing {
                     TextEditor(text: $draft).font(.body.monospaced()).scrollContentBackground(.hidden).padding(6)
                         .background(.quaternary, in: RoundedRectangle(cornerRadius: 8)).accessibilityIdentifier("preview.editor")
+                        .focused($editorFocused).onAppear { editorFocused = true }
                 } else if item.kind == .image, let d = item.data, let img = NSImage(data: d) {
                     Image(nsImage: img).resizable().scaledToFit()
                 } else {
@@ -169,6 +179,7 @@ struct SettingsView: View {
             Section("iCloud") {
                 Toggle("Sync clips with iCloud", isOn: Binding(get: { model.settings.iCloudSync }, set: { v in model.updateSettings { $0.iCloudSync = v } }))
                     .disabled(!syncAvailable).accessibilityIdentifier("settings.sync")
+                if model.settings.iCloudSync { Text(SyncButton.status(syncing: model.syncing, last: model.lastSynced)).font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("settings.syncStatus") }
                 Text(syncAvailable ? "Secrets and clips over 5 MB stay on this Mac." : "Needs a build signed with an iCloud container from an Apple developer account. This build can't sync.")
                     .font(.caption).foregroundStyle(.secondary)
             }

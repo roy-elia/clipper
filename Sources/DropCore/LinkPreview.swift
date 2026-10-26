@@ -13,6 +13,16 @@ public enum LinkPreview {
         return nil
     }
 
+    /// The page's preview image (og:image), resolved against the page URL; only http(s) results.
+    public static func imageURL(fromHTML html: String, base: URL) -> URL? {
+        let head = String(html.prefix(200_000))
+        guard let raw = capture(#"<meta[^>]+property=["']og:image(?::url)?["'][^>]+content=["']([^"']+)["']"#, in: head)
+                ?? capture(#"<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image(?::url)?["']"#, in: head),
+              let u = URL(string: decode(raw).trimmingCharacters(in: .whitespaces), relativeTo: base)?.absoluteURL,
+              ["http", "https"].contains(u.scheme?.lowercased()) else { return nil }
+        return u
+    }
+
     /// Only plain http(s) links to public hosts are fetched, never loopback or private addresses.
     public static func fetchable(_ text: String) -> URL? {
         guard let u = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)), ["http", "https"].contains(u.scheme?.lowercased()),

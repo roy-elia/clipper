@@ -74,4 +74,27 @@ import Foundation
         #expect(!s.changes(since: nil).contains { $0.id == b.id && $0.item == nil })
         _ = a
     }
+
+    @Test func linkImageParsing() {
+        let base = URL(string: "https://example.com/a/page")!
+        #expect(LinkPreview.imageURL(fromHTML: #"<meta property="og:image" content="/img/x.png">"#, base: base)?.absoluteString == "https://example.com/img/x.png")
+        #expect(LinkPreview.imageURL(fromHTML: #"<meta content="https://cdn.example.com/y.jpg" property="og:image">"#, base: base)?.absoluteString == "https://cdn.example.com/y.jpg")
+        #expect(LinkPreview.imageURL(fromHTML: #"<meta property="og:image" content="javascript:alert(1)">"#, base: base) == nil)
+        #expect(LinkPreview.imageURL(fromHTML: "<p>none</p>", base: base) == nil)
+    }
+
+    @Test func linkImageStoredAndNotRich() {
+        let s = HistoryStore(); let a = s.add(item("https://example.com"))
+        s.setLinkImage(a.id, Data([1, 2, 3])); s.setLinkTitle(a.id, "T")
+        #expect(s.item(a.id)?.extras?["linkImage"] == Data([1, 2, 3]))
+        #expect(s.item(a.id)?.isRich == false)
+        s.setLinkImage(a.id, Data(count: 2_000_000))
+        #expect(s.item(a.id)?.extras?["linkImage"] == Data([1, 2, 3]))
+    }
+
+    @Test func joinedTextSkipsSecretsAndImages() {
+        var secret = item("pw"); secret.sensitive = true
+        let img = ClipItem(kind: .image, title: "image", data: Data([0]), checksum: "i")
+        #expect(ClipItem.joinedText([item("one"), secret, img, item("two")]) == "one\ntwo")
+    }
 }

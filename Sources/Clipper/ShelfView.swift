@@ -1,5 +1,6 @@
 import SwiftUI
 import DropCore
+import UniformTypeIdentifiers
 
 @MainActor
 final class ShelfModel: ObservableObject {
@@ -34,6 +35,35 @@ final class ShelfModel: ObservableObject {
     @Published var modifierHeld = false     // quick-paste modifier is down: show the 1…9 badges
     @Published var isKey = true             // shelf has keyboard focus: selection ring in accent, else grey
     @Published var pausedUntil: String?     // menu text when capture is paused
+    @Published var marked: [UUID] = []      // extra cards picked with ⌘-click, in the order picked
+    @Published var syncing = false
+    @Published var namingBoard = false     // the inline new-pinboard field has the keyboard
+    @Published var lastSynced: Date?
+    var onPickMany: (([ClipItem], Bool) -> Void)?
+    var onDeleted: ((Int) -> Void)?
+    var onWritingTools: ((ClipItem) -> Void)?
+    var onSyncNow: (() -> Void)?
+    /// The cards a paste or delete acts on: the ⌘-click set when there is one, else the selected card.
+    var targets: [ClipItem] {
+        let picked = marked.compactMap { id in items.first { $0.id == id } }
+        return picked.isEmpty ? (selected.map { [$0] } ?? []) : picked
+    }
+    func toggleMark(_ item: ClipItem) {
+        if marked.isEmpty, let s = selected, s.id != item.id { marked = [s.id] }
+        if let i = marked.firstIndex(of: item.id) { marked.remove(at: i) } else { marked.append(item.id) }
+        if let i = items.firstIndex(where: { $0.id == item.id }) { selection = i }
+    }
+    func pickTargets(plain: Bool) {
+        let t = targets
+        if t.count > 1 { onPickMany?(t, plain) } else if let one = t.first { onPick?(one, plain) }
+    }
+    func deleteTargets() {
+        let t = targets; guard !t.isEmpty else { return }
+        lastDeletedBatch = t
+        for i in t { store.delete(i.id); stack.remove(i.id) }
+        lastDeleted = t.first; marked = []; refresh(); onDeleted?(t.count)
+    }
+    var lastDeletedBatch: [ClipItem] = []
 
     init(store: HistoryStore, settings: AppSettings = AppSettings()) {
         self.store = store; self.settings = settings; refresh()
@@ -50,6 +80,7 @@ final class ShelfModel: ObservableObject {
         }
         boards = store.pinboards(); apps = store.apps()
         selection = items.isEmpty ? 0 : min(selection, items.count - 1)
+        marked.removeAll { id in !items.contains { $0.id == id } }
     }
 
     func move(_ delta: Int) { guard !items.isEmpty else { return }; selection = min(max(selection + delta, 0), items.count - 1) }
@@ -70,9 +101,16 @@ final class ShelfModel: ObservableObject {
 
     func pin(_ item: ClipItem, to name: String?) { store.setPinboard(name, for: item.id); refresh() }
     @Published var lastDeleted: ClipItem?
-    func delete(_ item: ClipItem) { lastDeleted = item; store.delete(item.id); stack.remove(item.id); refresh() }
-    /// ⌘Z after a delete puts the clip back.
-    @discardableResult func undoDelete() -> Bool { guard let i = lastDeleted else { return false }; store.restore(i); lastDeleted = nil; refresh(); return true }
+    func delete(_ item: ClipItem) {
+        lastDeleted = item; lastDeletedBatch = [item]; store.delete(item.id); stack.remove(item.id)
+        marked.removeAll { $0 == item.id }; refresh(); onDeleted?(1)
+    }
+    /// ⌘Z after a delete puts the clip (or the whole deleted selection) back.
+    @discardableResult func undoDelete() -> Bool {
+        guard !lastDeletedBatch.isEmpty else { return false }
+        for i in lastDeletedBatch { store.restore(i) }
+        lastDeleted = nil; lastDeletedBatch = []; refresh(); return true
+    }
     func addBoard(_ name: String) { if store.createPinboard(name) { board = name.trimmingCharacters(in: .whitespaces); refresh() } }
     func renameBoard(_ old: String, _ new: String) { if store.renamePinboard(old, to: new) { board = new; refresh() } }
     func boardColor(_ name: String) -> Color { Color(hex: store.boardColor(name)) ?? .red }
@@ -89,6 +127,8 @@ struct ShelfView: View {
     @State private var adding = false
     @State private var dropTargeted = false
     @State private var filtering = false
+    @State private var dropBoard: String?
+    @FocusState private var boardFieldFocused: Bool
     @FocusState private var searchFocused: Bool
 
     static let cardSize = CGSize(width: 234, height: 234)
@@ -100,18 +140,31 @@ struct ShelfView: View {
             if model.items.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: dropTargeted ? "arrow.down.circle" : "tray").font(.title).foregroundStyle(.secondary)
-                    Text(model.picks ? "No suggestions yet" : model.board == nil ? (model.query.isEmpty ? "Nothing copied yet. Drop images, files or text here to save them." : "No clips match") : "Right-click a clip, then Pin, to add it here")
-                        .foregroundStyle(.secondary)
+                    if model.board != nil && model.query.isEmpty {
+                        Text("Pinboard is empty").font(.title2).foregroundStyle(.secondary)
+                        Text("Drag a card onto this pinboard's tab, or right-click a card and choose Pin.").font(.callout).foregroundStyle(.tertiary)
+                    } else {
+                        Text(model.picks ? "No suggestions yet" : model.query.isEmpty ? "Nothing copied yet. Drop images, files or text here to save them." : "No clips match")
+                            .foregroundStyle(.secondary)
+                    }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal, showsIndicators: false) {
                         LazyHStack(spacing: 18) {
                             ForEach(Array(model.items.enumerated()), id: \.element.id) { idx, item in
-                                Card(item: item, number: model.modifierHeld && idx < 9 ? idx + 1 : nil, selected: idx == model.selection, active: model.isKey,
-                                     quickSymbol: model.settings.quickModifier.symbol)
+                                Card(item: item, number: model.modifierHeld && idx < 9 ? idx + 1 : nil,
+                                     selected: model.marked.isEmpty ? idx == model.selection : model.marked.contains(item.id), active: model.isKey,
+                                     quickSymbol: model.settings.quickModifier.symbol,
+                                     boardColor: item.pinboard.map { model.boardColor($0) },
+                                     onDelete: { model.delete(item) })
                                     .id(item.id)
-                                    .onTapGesture { model.selection = idx; model.onPick?(item, NSEvent.modifierFlags.contains(.shift)) }
+                                    .onTapGesture {
+                                        let flags = NSEvent.modifierFlags
+                                        if flags.contains(.command) { model.toggleMark(item); return }
+                                        if !model.marked.isEmpty && model.marked.contains(item.id) { model.pickTargets(plain: flags.contains(.shift)); return }
+                                        model.marked = []; model.selection = idx; model.onPick?(item, flags.contains(.shift))
+                                    }
                                     .onDrag { provider(for: item) }
                                     .contextMenu { menu(for: item) }
                                     .accessibilityIdentifier("shelf.card.\(item.id)")
@@ -145,6 +198,13 @@ struct ShelfView: View {
                 iconButton(model.picks ? "sparkles" : "sparkles", label: "Suggestions", selected: model.picks) {
                     model.picks.toggle(); if model.picks { model.board = nil }; model.refresh()
                 }.accessibilityIdentifier("shelf.tab.Picks")
+                if model.settings.iCloudSync {
+                    SyncButton(syncing: model.syncing, last: model.lastSynced) { model.onSyncNow?() }
+                }
+                if model.marked.count > 1 {
+                    Text("\(model.marked.count) selected").font(.caption.weight(.semibold)).foregroundStyle(Palette.accent)
+                        .accessibilityIdentifier("shelf.selectedCount")
+                }
                 Spacer()
                 if !model.stack.isEmpty {
                     Label("\(model.stack.items.count) in stack", systemImage: "square.stack.3d.up").font(.caption).foregroundStyle(.secondary)
@@ -161,7 +221,12 @@ struct ShelfView: View {
                     .popover(isPresented: $filtering, arrowEdge: .top) { FilterPopover(model: model) }
                 tab("Clipboard", nil, symbol: "clock.arrow.circlepath")
                 ForEach(model.boards, id: \.self) { b in
-                    tab(b, b, dot: model.boardColor(b)).contextMenu {
+                    tab(b, b, dot: model.boardColor(b))
+                        .overlay { if dropBoard == b { Capsule().fill(Palette.accent.opacity(0.22)).allowsHitTesting(false) } }
+                        .onDrop(of: [.clipperClip], isTargeted: Binding(get: { dropBoard == b }, set: { dropBoard = $0 ? b : (dropBoard == b ? nil : dropBoard) })) { providers in
+                            pinDropped(providers, to: b)
+                        }
+                        .contextMenu {
                         Button("Rename…") { model.onRenameBoard?(b) }
                         Menu("Colour") {
                             ForEach(HistoryStore.boardPalette, id: \.self) { hex in
@@ -175,9 +240,18 @@ struct ShelfView: View {
                     }
                 }
                 if adding {
-                    TextField("Name", text: $newBoard).textFieldStyle(.roundedBorder).frame(width: 110)
-                        .accessibilityIdentifier("shelf.newBoardField")
-                        .onSubmit { model.addBoard(newBoard); newBoard = ""; adding = false }
+                    HStack(spacing: 6) {
+                        Circle().fill(Color(hex: HistoryStore.boardPalette[model.boards.count % HistoryStore.boardPalette.count]) ?? .red).frame(width: 9, height: 9)
+                        TextField("Pinboard name", text: $newBoard).textFieldStyle(.plain).frame(width: 120)
+                            .focused($boardFieldFocused)
+                            .accessibilityIdentifier("shelf.newBoardField")
+                            .onSubmit { model.addBoard(newBoard); newBoard = ""; adding = false }
+                            .onExitCommand { newBoard = ""; adding = false }
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .overlay(Capsule().strokeBorder(Palette.accent, lineWidth: 2))
+                    .onAppear { model.namingBoard = true; searchFocused = false; DispatchQueue.main.async { boardFieldFocused = true } }
+                    .onDisappear { model.namingBoard = false; searchFocused = true }
                 } else {
                     iconButton("plus", label: "New pinboard") { adding = true }.accessibilityIdentifier("shelf.addBoard")
                 }
@@ -260,10 +334,30 @@ struct ShelfView: View {
 
     /// What leaves the shelf when a card is dragged: the image, the files, or the text.
     func provider(for item: ClipItem) -> NSItemProvider {
-        if item.isSecret { return NSItemProvider() }
-        if let urls = item.fileURLs, let u = urls.first.flatMap({ URL(string: $0) }) { return NSItemProvider(contentsOf: u) ?? NSItemProvider() }
-        if let d = item.data, let img = NSImage(data: d) { return NSItemProvider(object: img) }
-        return NSItemProvider(object: (item.text ?? item.title) as NSString)
+        let p: NSItemProvider
+        if item.isSecret { p = NSItemProvider() }
+        else if let urls = item.fileURLs, let u = urls.first.flatMap({ URL(string: $0) }) { p = NSItemProvider(contentsOf: u) ?? NSItemProvider() }
+        else if let d = item.data, let img = NSImage(data: d) { p = NSItemProvider(object: img) }
+        else { p = NSItemProvider(object: (item.text ?? item.title) as NSString) }
+        // Inside the shelf the card also carries its id, so dropping it on a pinboard tab pins it.
+        let id = item.id.uuidString
+        p.registerDataRepresentation(forTypeIdentifier: UTType.clipperClip.identifier, visibility: .ownProcess) { done in
+            done(Data(id.utf8), nil); return nil
+        }
+        return p
+    }
+
+    func pinDropped(_ providers: [NSItemProvider], to board: String) -> Bool {
+        guard let p = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.clipperClip.identifier) }) else { return false }
+        p.loadDataRepresentation(forTypeIdentifier: UTType.clipperClip.identifier) { data, _ in
+            guard let data, let s = String(data: data, encoding: .utf8), let id = UUID(uuidString: s) else { return }
+            Task { @MainActor in
+                let ids = model.marked.contains(id) ? model.marked : [id]
+                for i in ids { model.store.setPinboard(board, for: i) }
+                model.marked = []; model.refresh()
+            }
+        }
+        return true
     }
 
     func handleKey(_ p: KeyPress) -> KeyPress.Result {
@@ -279,11 +373,23 @@ struct ShelfView: View {
     }
 
     @ViewBuilder func menu(for item: ClipItem) -> some View {
+        if let b = item.pinboard, model.picks || model.board != b {
+            Button("Show in \(b)") { model.picks = false; model.board = b; model.refresh() }
+            Divider()
+        }
+        if model.marked.count > 1 && model.marked.contains(item.id) {
+            Button("Paste \(model.marked.count) Clips") { model.pickTargets(plain: false) }
+            Button("Delete \(model.marked.count) Clips", role: .destructive) { model.deleteTargets() }
+            Divider()
+        }
         Button("Paste to \(model.targetApp.map(AppInfo.name) ?? "Front App")") { model.onPick?(item, false) }
         Button("Paste as Plain Text") { model.onPick?(item, true) }
         Button("Copy") { model.onCopy?(item) }
         Divider()
-        if item.data == nil && item.fileURLs == nil && !item.isSecret { Button("Edit") { model.onEdit?(item) } }
+        if item.data == nil && item.fileURLs == nil && !item.isSecret {
+            Button("Edit") { model.onEdit?(item) }
+            if item.kind == .text { Button("Writing Tools") { model.onWritingTools?(item) } }
+        }
         Button("Rename…") { model.onRename?(item) }
         Button("Duplicate") { model.store.duplicate(item.id); model.refresh() }
         Button("Delete", role: .destructive) { model.delete(item) }
@@ -369,9 +475,14 @@ struct Card: View {
     var selected = false
     var active = true
     var quickSymbol = "⌘"
+    var boardColor: Color? = nil
+    var onDelete: (() -> Void)? = nil
+    @State private var hovering = false
+    @State private var thumb: NSImage?
 
     var body: some View {
-        let header = AppInfo.color(item.sourceBundleID)
+        // Pinned cards take their pinboard's colour; others the source app's.
+        let header = boardColor ?? AppInfo.color(item.sourceBundleID)
         let ink = AppInfo.ink(on: header)
         let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
         VStack(spacing: 0) {
@@ -408,7 +519,21 @@ struct Card: View {
                     .strokeBorder(active ? Palette.accent : Color.secondary, lineWidth: 3)
             }
         }
-        .accessibilityElement(children: .ignore)
+        .overlay(alignment: .topLeading) {
+            if hovering, let onDelete {
+                Button(action: onDelete) {
+                    Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
+                        .frame(width: 20, height: 20).background(.regularMaterial, in: Circle())
+                        .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+                }
+                .buttonStyle(.plain).help("Delete this clip (⌘Z to undo)")
+                .accessibilityLabel("Delete clip").accessibilityIdentifier("card.delete")
+                .offset(x: -2, y: -2).transition(.opacity)
+            }
+        }
+        .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hovering = h } }
+        .task(id: item.id) { if item.kind == .file { thumb = await FileThumb.image(for: item) } }
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("\(title), \(item.isSecret ? "hidden secret" : item.title), \(item.detail)")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
@@ -443,6 +568,8 @@ struct Card: View {
             c.overlay(alignment: .center) { Text(t).font(.callout.monospaced()).padding(.horizontal, 8).padding(.vertical, 3).background(.thinMaterial, in: Capsule()).padding(.bottom, 24) }
         } else if item.kind == .image, let d = item.data, let img = NSImage(data: d) {
             Checkerboard().overlay { Image(nsImage: img).resizable().scaledToFit() }.clipped()
+        } else if item.kind == .file, let thumb {
+            Checkerboard().overlay { Image(nsImage: thumb).resizable().scaledToFit().padding(10) }.clipped()
         } else if item.kind == .file {
             VStack(alignment: .leading, spacing: 6) {
                 Image(systemName: "doc.fill").font(.title2).foregroundStyle(.secondary)
@@ -450,14 +577,22 @@ struct Card: View {
             }.padding(14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else if item.kind == .link {
             VStack(alignment: .leading, spacing: 4) {
+                if let d = item.extras?["linkImage"], let img = NSImage(data: d) {
+                    Image(nsImage: img).resizable().scaledToFill().frame(height: 96).frame(maxWidth: .infinity).clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
                 if let t = item.extras?["linkTitle"].flatMap({ String(data: $0, encoding: .utf8) }) {
-                    Text(t).font(.callout.weight(.semibold)).lineLimit(3)
-                    Text(item.text ?? "").font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Text(t).font(.callout.weight(.semibold)).lineLimit(item.extras?["linkImage"] == nil ? 3 : 2)
+                    Text(item.text ?? "").font(.caption).foregroundStyle(.secondary).lineLimit(item.extras?["linkImage"] == nil ? 2 : 1)
                 } else {
                     Image(systemName: "link").foregroundStyle(.secondary)
                     Text(item.text ?? item.title).font(.callout).lineLimit(5)
                 }
             }.padding(14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else if let styled = RichText.attributed(item) {
+            Text(styled).lineSpacing(1)
+                .padding(14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .mask(LinearGradient(stops: [.init(color: .black, location: 0.62), .init(color: .clear, location: 0.86)], startPoint: .top, endPoint: .bottom))
         } else {
             Text(item.text ?? item.title).font(.system(size: 14)).lineSpacing(1)
                 .padding(14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

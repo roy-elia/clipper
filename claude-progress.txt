@@ -7,3 +7,8 @@
   mode; timed pause; confidential/transient toggles; quick-paste modifier; reset shortcuts (⇧⌘V, ⇧⌘C);
   Keyboard Shortcuts window.
 - Not buildable here: iCloud sync proof, shared pinboards, widgets, native Shortcuts actions.
+2026-10-26 second pass (recording + listed gaps)
+- Built: hover ✕ delete on every card (⌘Z undo), ⌘-click multi-select (Return pastes them joined, ⌫ deletes all,
+  ⌘A selects all), drag a card onto a pinboard tab to pin, pinned cards in the pinboard colour, inline
+  pinboard naming, ⌘F search, ⌘G / "Show in <Pinboard>", Writing Tools item, Edit opens the editor,
+  "Pinboard is empty", file thumbnails (Quick Look), styled rich text, link preview images, sync button + status.

@@ -56,3 +56,12 @@ Pause Paste ▸ (Pause, 15 min, 30 min, 1 h, 3 h, 8 h) · Quit ⌘Q
 ## Not observed live
 Drag *into* Paste's shelf, Edit/Rename sheets, Share submenu contents, Help windows (not opened to avoid
 side effects such as diagnostics or web pages).
+
+## From the 2026-10-26 recording
+- A sync button with circular arrows sits next to the suggestions button; it spins while syncing.
+- Dragging a card onto a pinboard tab pins it (a green + appears while over the tab); pinned cards
+  take the pinboard's colour in their header.
+- "+" adds an inline pinboard tab with a colour dot and a focused name field.
+- Search has the ⌘F shortcut (tooltip "Search (⌘F)").
+- Card menu on a pinned card starts with "Show in <Pinboard>" ⌘G; text cards also offer Writing Tools ⇧⌘E.
+- An empty pinboard shows a large "Pinboard is empty".
