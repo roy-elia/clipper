@@ -5,7 +5,9 @@ import DropCore
 
 @MainActor
 final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    static let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Clipper")
+    /// CLIPPER_SUPPORT_DIR points a test run at a scratch folder so it never touches the real history.
+    static let support = ProcessInfo.processInfo.environment["CLIPPER_SUPPORT_DIR"].map { URL(fileURLWithPath: $0) }
+        ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Clipper")
     static let settingsURL = support.appendingPathComponent("settings.json")
     let store = HistoryStore(url: App.support.appendingPathComponent("history.json"))
     lazy var monitor = PasteboardMonitor(store: store)
@@ -74,7 +76,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.onClear = { [weak self] in self?.confirmClear() }
         model.onDrop = { [weak self] providers in self?.ingest(providers) ?? false }
         NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { if self?.panel?.isVisible == true, self?.confirming == false { self?.panel?.orderOut(nil) } }
+            MainActor.assumeIsolated { if self?.panel?.isVisible == true { PasteInjector.diag("resign buttons=\(NSEvent.pressedMouseButtons)") }; if self?.panel?.isVisible == true, self?.confirming == false, NSEvent.pressedMouseButtons == 0 { self?.panel?.orderOut(nil) } }
         }
         installWheelScrolling()
         model.onSettingsChanged = { [weak self] in
@@ -383,6 +385,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Drops onto the shelf save the dropped images, files and text as clips.
     func ingest(_ providers: [NSItemProvider]) -> Bool {
+        PasteInjector.diag("drop: \(providers.count) item(s)")
         let rules = monitor.rules
         let me = Bundle.main.bundleIdentifier
         var accepted = false
@@ -482,12 +485,26 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let m = clickAwayMonitor { NSEvent.removeMonitor(m); clickAwayMonitor = nil }
     }
 
+    /// A press outside the shelf dismisses it on release, unless that press was a drag that ended over the shelf
+    /// (dragging a file in from Finder must not close the shelf it is being dropped on).
     func startClickAway() {
         if let m = clickAwayMonitor { NSEvent.removeMonitor(m) }
-        clickAwayMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
+        var downOutside = false, dragged = false
+        clickAwayMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] e in
             MainActor.assumeIsolated {
                 guard let self, let p = self.panel, p.isVisible, !self.confirming else { return }
-                if !p.frame.contains(NSEvent.mouseLocation) { p.orderOut(nil) }
+                let inside = p.frame.contains(NSEvent.mouseLocation)
+                if e.type != .leftMouseDragged { PasteInjector.diag("away: \(e.type.rawValue) inside=\(inside)") }
+                switch e.type {
+                case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+                    downOutside = !inside; dragged = false
+                    if downOutside, e.type != .leftMouseDown { p.orderOut(nil) }
+                case .leftMouseDragged: dragged = true
+                case .leftMouseUp:
+                    if downOutside, !(dragged && inside) { p.orderOut(nil) }
+                    downOutside = false; dragged = false
+                default: break
+                }
             }
         }
     }
