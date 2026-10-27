@@ -12,3 +12,12 @@
   ⌘A selects all), drag a card onto a pinboard tab to pin, pinned cards in the pinboard colour, inline
   pinboard naming, ⌘F search, ⌘G / "Show in <Pinboard>", Writing Tools item, Edit opens the editor,
   "Pinboard is empty", file thumbnails (Quick Look), styled rich text, link preview images, sync button + status.
+2026-10-27 third pass (everything else in Paste's interface text)
+- Built: editors per kind (formatted text with B/I/U/S and Writing Tools, image rotate + remove/restore background,
+  colour, link) with Save automatically / Save / Discard; Open, Open With, Reveal in Finder; Copy as Plain Text;
+  Select All / Deselect All; Date filter; Last used / Never used; Edit Pinboard (name + colour); Untitled pinboards;
+  confirm when pinning several; AI tools screen (per-tool tokens, connect sheet with config and Claude Code command,
+  disconnect, port change); Picks trigger; first-paste prompt; move to Applications; Start Diagnostics / Stop and
+  Copy Logs; Import from iPhone (Continuity Camera).
+- Verified without the screen: 87 tests, self-test, snapshots; per-tool MCP tokens over HTTP and via the stdio bridge.
+- Not verified live (screen locked): every new window and menu item above.
