@@ -32,4 +32,5 @@
   with typing going there (now key without activating, like the shelf); no Edit menu, so ⌘C/⌘V/⌘A/⌘Z did nothing
   in text fields; Return in the new-pinboard field also pasted the selected clip; disconnecting every AI tool
   brought the old shared token back on relaunch; snippet Copy buttons had no accessibility identifiers.
-- Not verified: Continuity Camera with a real iPhone (menu lists no device here); Open With submenu contents.
+- Verified after: Open With lists apps for the file and opens it in the chosen one; Import from iPhone takes a photo
+  on the iPhone and saves it as a clip (needed a context menu: the placeholder item stayed empty in a pop-up menu).

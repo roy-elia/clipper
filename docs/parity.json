@@ -276,7 +276,7 @@
     "feature": "Import from iPhone (Continuity Camera)",
     "paste_behaviour": "see paste-behaviour.md",
     "clipper_status": "built",
-    "check": "window and menu open; no device listed here, capture unverified",
-    "passes": false
+    "check": "live 2026-10-27: device submenu lists iPhone and iPad; Take Photo on iPhone saved a 1440x1920 image clip",
+    "passes": true
   }
 ]

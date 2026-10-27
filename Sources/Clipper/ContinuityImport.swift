@@ -22,13 +22,19 @@ final class ContinuityImportView: NSView, @preconcurrency NSServicesMenuRequesto
 
     override var acceptsFirstResponder: Bool { true }
 
+    /// macOS adds "Import from iPhone or iPad" (with each nearby device's Take Photo, Scan Documents and Add Sketch)
+    /// only to a context menu shown for a view that accepts images. A placeholder item marked with
+    /// importFromDeviceIdentifier stays an empty, greyed-out item in a pop-up menu, so a context menu is used.
     @objc func showMenu(_ sender: NSButton) {
-        window?.makeFirstResponder(self)
+        guard let window else { return }
+        window.makeFirstResponder(self)
         let menu = NSMenu()
-        let item = NSMenuItem(title: "Import from iPhone or iPad", action: nil, keyEquivalent: "")
-        item.identifier = NSMenuItem.importFromDeviceIdentifier
-        menu.addItem(item)
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+        let header = NSMenuItem(title: "Take a photo or scan with:", action: nil, keyEquivalent: ""); header.isEnabled = false
+        menu.addItem(header)
+        let below = sender.convert(NSPoint(x: 0, y: sender.bounds.maxY + 4), to: nil)
+        guard let e = NSEvent.mouseEvent(with: .rightMouseDown, location: below, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                         windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return }
+        NSMenu.popUpContextMenu(menu, with: e, for: self)
     }
 
     override func validRequestor(forSendType sendType: NSPasteboard.PasteboardType?, returnType: NSPasteboard.PasteboardType?) -> Any? {
