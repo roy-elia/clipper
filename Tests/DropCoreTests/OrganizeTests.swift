@@ -53,4 +53,17 @@ import Foundation
         let j = MCPClients.config(name: "Claude Code", bridgePath: "/A/clipper-mcp-stdio", token: "abc", port: 47821)
         #expect(j.contains("\"clipper-claude-code\"") && j.contains("http://127.0.0.1:47821/mcp") && j.contains("\"MCP_TOKEN\": \"abc\""))
     }
+
+    @Test func replaceContentFromEditors() {
+        let s = HistoryStore()
+        let a = s.add(ClipItem(kind: .text, title: "old", text: "old", checksum: "old", extras: ["public.rtf": Data([1])]))
+        let r = s.replaceContent(a.id, text: "new line\nmore", data: nil, extras: ["public.rtf": Data([2])])
+        #expect(r?.title == "new line" && r?.extras?["public.rtf"] == Data([2]) && r?.checksum == CaptureRules.checksum(string: "new line\nmore", data: nil))
+        let l = s.add(ClipItem(kind: .link, title: "https://a.com", text: "https://a.com", checksum: "l"))
+        s.setLinkTitle(l.id, "A")
+        #expect(s.replaceContent(l.id, text: "https://a.com", data: nil, extras: nil)?.extras?["linkTitle"] != nil)
+        #expect(s.replaceContent(l.id, text: "https://b.com", data: nil, extras: nil)?.extras == nil)
+        let img = s.add(ClipItem(kind: .image, title: "image", data: Data([9]), checksum: "i"))
+        #expect(s.replaceContent(img.id, text: nil, data: Data([8]), extras: nil)?.data == Data([8]))
+    }
 }

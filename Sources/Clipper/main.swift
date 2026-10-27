@@ -19,6 +19,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var settingsWindow: NSWindow?
     var mcp: MCPServer?
     static let tokenURL = App.support.appendingPathComponent("mcp-token")
+    static let clientsURL = App.support.appendingPathComponent("mcp-clients.json")
+    let mcpClients = MCPClients(url: App.clientsURL)
+    lazy var clientsModel = ClientsModel(mcpClients)
+    var editorWindow: NSWindow?
+    var importWindow: NSWindow?
+    var lastShelfApp: String?
     lazy var mcpToken = MCPServer.loadToken(at: App.tokenURL)
     var statusItem: NSStatusItem?
     var statusMenu: NSMenu?
@@ -114,6 +120,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         monitor.onChange = { [weak self] in
             guard let self else { return }
             askModelAboutLatest()
+            if PasteInjector.verbose, let l = store.all.first { PasteInjector.diag("capture: \(l.kind.rawValue) from \(l.sourceBundleID ?? "?") \(l.isSecret ? "secret" : "\(l.title.count) chars")") }
             fetchLinkTitleForLatest()
             advertiseHandoff()
             if let latest = store.all.first {
@@ -135,10 +142,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         stackHotkeys.register(model.settings.stackHotkey)
         model.onShare = { [weak self] item in self?.share(item) }
         model.onCopy = { [weak self] item in self?.copyOnly(item) }
-        model.onEdit = { [weak self] item in self?.panel?.orderOut(nil); self?.preview(item, edit: true) }
+        model.onEdit = { [weak self] item in self?.openEditor(item) }
         model.onWritingTools = { [weak self] item in
             guard let self else { return }
-            panel?.orderOut(nil); preview(item, edit: true); NSApp.activate()
+            openEditor(item)
             // Apple's Writing Tools work on the focused editor (macOS 15.2+).
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { NSApp.sendAction(Selector(("showWritingTools:")), to: nil, from: nil) }
         }
@@ -148,6 +155,15 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             osd.show(n == 1 ? "Deleted. ⌘Z to undo" : "Deleted \(n) clips. ⌘Z to undo", symbol: "trash", hideFromSharing: model.settings.hideFromSharing)
         }
         model.onSyncNow = { [weak self] in self?.syncNow() }
+        model.onOpen = { [weak self] item, app in self?.openTarget(item, with: app) }
+        model.onReveal = { [weak self] item in
+            guard let u = ShelfView.target(of: item) else { return }
+            self?.panel?.orderOut(nil); NSWorkspace.shared.activateFileViewerSelecting([u])
+        }
+        model.onCopyPlain = { [weak self] item in self?.copyOnly(item, plain: true) }
+        model.onEditBoard = { [weak self] name in self?.editBoard(name) }
+        model.confirmPin = { [weak self] n, board in self?.confirm("Pin \(n) clips to \(board)?", button: "Pin") ?? true }
+        migrateMCPToken()
         model.onRename = { [weak self] item in self?.renameClip(item) }
         model.onRenameBoard = { [weak self] name in self?.renameBoard(name) }
         model.onCommand = { [weak self] c in self?.run(c) }
@@ -163,7 +179,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         lastOtherApp = NSWorkspace.shared.frontmostApplication.flatMap { $0.processIdentifier == ProcessInfo.processInfo.processIdentifier ? nil : $0 }
         syncState = (try? Data(contentsOf: App.syncStateURL)).flatMap { try? JSONDecoder().decode(SyncState.self, from: $0) } ?? SyncState()
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.syncNow() } }
-        DispatchQueue.main.async { [weak self] in self?.showFirstRunWindows() }
+        DispatchQueue.main.async { [weak self] in self?.offerMoveToApplications(); self?.showFirstRunWindows() }
         monitor.start()
         applySpotlight()
         PasteInjector.diag("launch: pid \(ProcessInfo.processInfo.processIdentifier) trusted=\(PasteInjector.trusted) postEventAccess=\(CGPreflightPostEventAccess())")
@@ -177,7 +193,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func showSettings() {
         if settingsWindow == nil {
-            settingsWindow = window("Clipper Settings", SettingsView(model: model, accessibilityTrusted: PasteInjector.trusted, mcpToken: mcpToken, modelNote: SmartClassifier.isAvailable ? " On-device model: available." : " On-device model: not available on this Mac, rules only.", onGrant: { [weak self] in self?.grant() }), id: "settings")
+            settingsWindow = window("Clipper Settings", SettingsView(model: model, accessibilityTrusted: PasteInjector.trusted, mcpToken: mcpToken, clients: clientsModel, modelNote: SmartClassifier.isAvailable ? " On-device model: available." : " On-device model: not available on this Mac, rules only.", onGrant: { [weak self] in self?.grant() }), id: "settings")
         }
         NSApp.activate(); settingsWindow?.makeKeyAndOrderFront(nil)
     }
@@ -243,6 +259,111 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    func confirm(_ title: String, info: String = "", button: String) -> Bool {
+        confirming = true; defer { confirming = false }
+        NSApp.activate()
+        let a = NSAlert(); a.messageText = title; a.informativeText = info
+        a.addButton(withTitle: button); a.addButton(withTitle: "Cancel")
+        return a.runModal() == .alertFirstButtonReturn
+    }
+
+    /// 1 for the first button, 2 for the second.
+    func ask3(_ title: String, info: String, first: String, second: String) -> Int {
+        confirming = true; defer { confirming = false }
+        NSApp.activate()
+        let a = NSAlert(); a.messageText = title; a.informativeText = info
+        a.addButton(withTitle: first); a.addButton(withTitle: second)
+        return a.runModal() == .alertFirstButtonReturn ? 1 : 2
+    }
+
+    func openTarget(_ item: ClipItem, with app: URL?) {
+        guard let u = ShelfView.target(of: item) else { return }
+        panel?.orderOut(nil); store.markUsed(item.id)
+        if let app { NSWorkspace.shared.open([u], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) }
+        else { NSWorkspace.shared.open(u) }
+    }
+
+    /// Edit Pinboard: name and colour in one dialog.
+    func editBoard(_ name: String) {
+        confirming = true; defer { confirming = false }
+        NSApp.activate()
+        let a = NSAlert(); a.messageText = "Edit Pinboard"
+        let box = NSStackView(frame: NSRect(x: 0, y: 0, width: 260, height: 56)); box.orientation = .vertical; box.alignment = .leading
+        let field = NSTextField(string: name); field.frame.size.width = 260
+        let pop = NSPopUpButton()
+        let names = ["Red", "Orange", "Yellow", "Green", "Teal", "Blue", "Purple", "Pink"]
+        for (i, hex) in HistoryStore.boardPalette.enumerated() {
+            pop.addItem(withTitle: names[i])
+            let dot = NSImage(size: NSSize(width: 12, height: 12), flipped: false) { r in (NSColor(Color(hex: hex) ?? .gray)).setFill(); NSBezierPath(ovalIn: r).fill(); return true }
+            pop.lastItem?.image = dot
+        }
+        pop.selectItem(at: HistoryStore.boardPalette.firstIndex(of: store.boardColor(name)) ?? 0)
+        box.addArrangedSubview(field); box.addArrangedSubview(pop)
+        field.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        a.accessoryView = box; a.addButton(withTitle: "Save"); a.addButton(withTitle: "Cancel")
+        a.window.initialFirstResponder = field
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        store.setBoardColor(name, HistoryStore.boardPalette[pop.indexOfSelectedItem])
+        let new = field.stringValue.trimmingCharacters(in: .whitespaces)
+        if !new.isEmpty, new != name { model.renameBoard(name, new) } else { model.refresh() }
+    }
+
+    func openEditor(_ item: ClipItem) {
+        panel?.orderOut(nil)
+        guard !item.isSecret, item.fileURLs == nil else { preview(item); return }
+        let close: () -> Void = { [weak self] in self?.editorWindow?.close(); self?.editorWindow = nil }
+        let view = ClipEditorView(item: item, autosave: model.settings.editorAutosave,
+                                  onAutosaveChanged: { [weak self] v in self?.model.updateSettings { $0.editorAutosave = v }; if let w = self?.editorWindow, let i = self?.store.item(item.id) { _ = w; self?.openEditor(i) } },
+                                  onSave: { [weak self] e in self?.store.replaceContent(item.id, text: e.text, data: e.data, extras: e.extras); self?.model.refresh() },
+                                  onClose: close)
+        if editorWindow == nil {
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 460), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+            w.isReleasedWhenClosed = false; editorWindow = w
+        }
+        editorWindow?.title = view.title
+        editorWindow?.contentView = NSHostingView(rootView: view)
+        applyPrivacy()
+        editorWindow?.center(); NSApp.activate(); editorWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Run from Downloads or a disk image, offer once to move into ~/Applications (no admin password needed).
+    func offerMoveToApplications() {
+        let path = Bundle.main.bundlePath
+        let home = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications").path
+        guard path.hasSuffix(".app"), !path.hasPrefix("/Applications/"), !path.hasPrefix(home + "/"), !model.settings.askedMoveToApplications else { return }
+        model.updateSettings { $0.askedMoveToApplications = true }
+        guard confirm("Move Clipper to your Applications folder?", info: "Clipper is running from \((path as NSString).deletingLastPathComponent). Moving it keeps your Downloads folder uncluttered and lets it open at login.", button: "Move to Applications") else { return }
+        let dest = URL(fileURLWithPath: home).appendingPathComponent("Clipper.app")
+        do {
+            try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
+            if FileManager.default.fileExists(atPath: dest.path) { try FileManager.default.trashItem(at: dest, resultingItemURL: nil) }
+            try FileManager.default.moveItem(atPath: path, toPath: dest.path)
+            let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/open"); p.arguments = ["-n", dest.path]
+            try p.run(); NSApp.terminate(nil)
+        } catch {
+            let a = NSAlert(); a.messageText = "Could not move to Applications folder"; a.informativeText = error.localizedDescription; a.runModal()
+        }
+    }
+
+    /// Import from iPhone: Continuity Camera (Take Photo, Scan Documents) into a new clip.
+    func showImport() {
+        if importWindow == nil {
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 200), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            w.title = "Import from iPhone"; w.isReleasedWhenClosed = false
+            let v = ContinuityImportView(frame: w.contentRect(forFrameRect: w.frame))
+            v.onImage = { [weak self] data in
+                guard let self else { return }
+                let snap = PasteboardSnapshot(types: ["public.png"], data: data, sourceBundleID: Bundle.main.bundleIdentifier)
+                if let item = monitor.rules.makeItem(from: snap) { store.add(item); model.refresh() }
+                importWindow?.close()
+                osd.show("Added from iPhone", symbol: "iphone", hideFromSharing: model.settings.hideFromSharing)
+            }
+            w.contentView = v; importWindow = w
+        }
+        importWindow?.center(); NSApp.activate(); importWindow?.makeKeyAndOrderFront(nil)
+        importWindow?.makeFirstResponder(importWindow?.contentView)
+    }
+
     /// Several cards at once: their text, one per line, pasted (or copied) as one clip.
     func pickMany(_ items: [ClipItem], plain: Bool) {
         let text = ClipItem.joinedText(items)
@@ -253,8 +374,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// Copy without pasting: the clip goes on the clipboard and the shelf closes.
-    func copyOnly(_ item: ClipItem) {
-        monitor.write(item, plain: model.settings.alwaysPlain)
+    func copyOnly(_ item: ClipItem, plain: Bool = false) {
+        store.markUsed(item.id)
+        monitor.write(item, plain: plain || model.settings.alwaysPlain)
         panel?.orderOut(nil)
         osd.show(item.isSecret ? "Secret copied" : "Copied", symbol: "doc.on.clipboard", hideFromSharing: model.settings.hideFromSharing)
     }
@@ -290,6 +412,16 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .resume: resume()
         case .clear: confirmClear()
         case .quit: NSApp.terminate(nil)
+        case .importFromDevice: panel?.orderOut(nil); showImport()
+        case .startDiagnostics:
+            PasteInjector.verbose = true; model.diagnosing = true
+            PasteInjector.diag("diagnostics started: version \(App.version) build \(App.build), macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
+            osd.show("Diagnostics started", symbol: "stethoscope", hideFromSharing: model.settings.hideFromSharing)
+        case .stopDiagnostics:
+            PasteInjector.verbose = false; model.diagnosing = false
+            let log = (try? String(contentsOf: PasteInjector.logURL, encoding: .utf8)) ?? ""
+            copyWithoutSaving(String(log.suffix(200_000)))
+            osd.show("Logs copied. Paste them into your report.", symbol: "doc.on.clipboard", hideFromSharing: model.settings.hideFromSharing)
         }
     }
 
@@ -349,7 +481,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if e.keyCode == 51 { model.deleteTargets(); return nil }
             if let c = e.charactersIgnoringModifiers {
                 if c == "c", model.query.isEmpty || panel.firstResponder as? NSTextView == nil, let i = model.selected { copyOnly(i); return nil }
-                if c == "e", let i = model.selected { panel.orderOut(nil); preview(i, edit: true); return nil }
+                if c == "e", let i = model.selected { openEditor(i); return nil }
                 if c == "f" { model.focusTick += 1; return nil }
                 if c == "g", let i = model.selected, let b = i.pinboard { model.picks = false; model.board = b; model.refresh(); return nil }
                 if c == "a", model.query.isEmpty { model.marked = model.items.map(\.id); return nil }
@@ -546,7 +678,16 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
            target != Bundle.main.bundleIdentifier {
             model.log.record(.init(itemID: item.id, kind: item.kind, targetApp: target)); model.log.save(App.logURL)
         }
-        if model.settings.pasteTarget == .clipboard { copyOnly(item); return }
+        if model.settings.pasteTarget == .clipboard { copyOnly(item, plain: plain); return }
+        // The first paste without Accessibility access asks once: allow it, or switch to copy-only.
+        if !PasteInjector.trusted && !model.settings.askedDirectPaste {
+            model.updateSettings { $0.askedDirectPaste = true }
+            let app = (panel as? ShelfPanel)?.previousApp?.localizedName ?? "the front app"
+            let choice = ask3("Do you want to paste directly to \(app)?", info: "Clipper needs Accessibility access to paste for you. Without it, picked clips go to the clipboard and you paste with ⌘V.",
+                              first: "Allow Access", second: "Not Now, Copy to Clipboard")
+            if choice == 1 { grant() } else { model.updateSettings { $0.pasteTarget = .clipboard }; copyOnly(item, plain: plain); return }
+        }
+        store.markUsed(item.id)
         monitor.write(item, plain: plain || model.settings.alwaysPlain)
         sounds.play(.paste)
         panel?.orderOut(nil)
@@ -558,12 +699,19 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// The single token from earlier versions becomes the first connected tool, so existing setups keep working.
+    func migrateMCPToken() {
+        guard mcpClients.all.isEmpty, FileManager.default.fileExists(atPath: App.tokenURL.path) else { return }
+        mcpClients.add("Existing connection", token: mcpToken); clientsModel.reload()
+    }
+
     /// Starts, restarts or stops the MCP server to match settings.
     func applyMCP() {
         let s = model.settings
         if let m = mcp, !s.mcpEnabled || m.port != s.mcpPort { m.stop(); mcp = nil }
         guard s.mcpEnabled, mcp == nil else { return }
-        let server = MCPServer(store: store, token: mcpToken, port: s.mcpPort)
+        let clients = mcpClients
+        let server = MCPServer(store: store, tokens: { clients.tokens }, onUse: { t in clients.touch(token: t); Task { @MainActor in self.clientsModel.reload() } }, port: s.mcpPort)
         server.onState = { NSLog("Clipper MCP \($0)") }
         do { try server.start(); mcp = server } catch { NSLog("Clipper MCP failed to start: \(error)") }
     }
@@ -683,7 +831,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             shelf.previousApp = front?.bundleIdentifier == Bundle.main.bundleIdentifier ? lastOtherApp : front
             model.targetApp = shelf.previousApp?.bundleIdentifier
         }
-        model.picks = model.settings.opensOnPicks && !PickRanker(log: model.log).rank(store.all, for: model.targetApp, limit: 1).isEmpty
+        let appChanged = model.targetApp != lastShelfApp
+        lastShelfApp = model.targetApp
+        model.picks = model.settings.opensOnPicks && (model.settings.suggestTrigger == .always || appChanged)
+            && !PickRanker(log: model.log).rank(store.all, for: model.targetApp, limit: 1).isEmpty
         model.board = nil; model.selection = 0; model.query = ""
         model.refresh(); model.focusTick += 1
         // The shelf rises from the bottom edge of the screen the pointer is on, full width with a small margin.
@@ -844,7 +995,8 @@ let app = NSApplication.shared
 /// --serve-mcp <port> <tokenfile>: headless server over an in-memory store, for end-to-end tests.
 if let i = CommandLine.arguments.firstIndex(of: "--serve-mcp"), i + 2 < CommandLine.arguments.count,
    let port = UInt16(CommandLine.arguments[i + 1]) {
-    let server = MCPServer(store: HistoryStore(), token: MCPServer.loadToken(at: URL(fileURLWithPath: CommandLine.arguments[i + 2])), port: port)
+    let fixedToken = MCPServer.loadToken(at: URL(fileURLWithPath: CommandLine.arguments[i + 2]))
+    let server = MCPServer(store: HistoryStore(), tokens: { [fixedToken] }, port: port)
     server.onState = { print("MCP \($0)"); fflush(stdout) }
     do { try server.start() } catch { print("MCP failed: \(error)"); exit(1) }
     RunLoop.main.run()

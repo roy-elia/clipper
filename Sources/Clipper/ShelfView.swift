@@ -8,6 +8,7 @@ final class ShelfModel: ObservableObject {
     @Published var kind: ClipKind?
     @Published var board: String?          // nil = History
     @Published var app: String?            // source-app filter
+    @Published var dateRange: DateRange?   // date filter
     @Published var picks = false           // show suggestions for targetApp instead of history
     @Published var targetApp: String?      // the app a paste would go into
     var log = PasteLog()
@@ -37,12 +38,20 @@ final class ShelfModel: ObservableObject {
     @Published var pausedUntil: String?     // menu text when capture is paused
     @Published var marked: [UUID] = []      // extra cards picked with ⌘-click, in the order picked
     @Published var syncing = false
+    @Published var diagnosing = false
     @Published var namingBoard = false     // the inline new-pinboard field has the keyboard
     @Published var lastSynced: Date?
     var onPickMany: (([ClipItem], Bool) -> Void)?
     var onDeleted: ((Int) -> Void)?
     var onWritingTools: ((ClipItem) -> Void)?
     var onSyncNow: (() -> Void)?
+    var onOpen: ((ClipItem, URL?) -> Void)?        // open a file or link, optionally with a chosen app
+    var onReveal: ((ClipItem) -> Void)?
+    var onCopyPlain: ((ClipItem) -> Void)?
+    var onEditBoard: ((String) -> Void)?
+    var confirmPin: ((Int, String) -> Bool)?
+    func selectAll() { marked = items.map(\.id) }
+    func deselectAll() { marked = [] }
     /// The cards a paste or delete acts on: the ⌘-click set when there is one, else the selected card.
     var targets: [ClipItem] {
         let picked = marked.compactMap { id in items.first { $0.id == id } }
@@ -77,6 +86,7 @@ final class ShelfModel: ObservableObject {
             }
         } else {
             items = store.search(query, kind: kind, pinboard: board, app: app)
+            if let r = dateRange { items = items.filter { r.contains($0.createdAt) } }
         }
         boards = store.pinboards(); apps = store.apps()
         selection = items.isEmpty ? 0 : min(selection, items.count - 1)
@@ -111,7 +121,11 @@ final class ShelfModel: ObservableObject {
         for i in lastDeletedBatch { store.restore(i) }
         lastDeleted = nil; lastDeletedBatch = []; refresh(); return true
     }
-    func addBoard(_ name: String) { if store.createPinboard(name) { board = name.trimmingCharacters(in: .whitespaces); refresh() } }
+    /// An empty name makes "Untitled" (or "Untitled 2", …).
+    func addBoard(_ name: String) {
+        let n = name.trimmingCharacters(in: .whitespaces).isEmpty ? store.freeBoardName() : name.trimmingCharacters(in: .whitespaces)
+        if store.createPinboard(n) { picks = false; board = n; refresh() }
+    }
     func renameBoard(_ old: String, _ new: String) { if store.renamePinboard(old, to: new) { board = new; refresh() } }
     func boardColor(_ name: String) -> Color { Color(hex: store.boardColor(name)) ?? .red }
     func deleteBoard(_ name: String) { store.deletePinboard(name); if board == name { board = nil }; refresh() }
@@ -119,7 +133,7 @@ final class ShelfModel: ObservableObject {
 }
 
 /// Commands from the shelf's ⋯ menu, handled by the app.
-enum ShelfCommand { case about, newClip, settings, gettingStarted, shortcuts, pause(TimeInterval?), resume, clear, quit }
+enum ShelfCommand { case about, newClip, settings, gettingStarted, shortcuts, pause(TimeInterval?), resume, clear, quit, importFromDevice, startDiagnostics, stopDiagnostics }
 
 struct ShelfView: View {
     @ObservedObject var model: ShelfModel
@@ -188,6 +202,7 @@ struct ShelfView: View {
         .onChange(of: model.kind) { model.refresh() }
         .onChange(of: model.board) { model.refresh() }
         .onChange(of: model.app) { model.refresh() }
+        .onChange(of: model.dateRange) { model.refresh() }
     }
 
     // MARK: control row
@@ -216,7 +231,7 @@ struct ShelfView: View {
             }
             HStack(spacing: 6) {
                 searchField
-                iconButton("line.3.horizontal.decrease", label: "Filter", selected: model.kind != nil || model.app != nil) { filtering.toggle() }
+                iconButton("line.3.horizontal.decrease", label: "Filter", selected: model.kind != nil || model.app != nil || model.dateRange != nil) { filtering.toggle() }
                     .accessibilityIdentifier("shelf.filter")
                     .popover(isPresented: $filtering, arrowEdge: .top) { FilterPopover(model: model) }
                 tab("Clipboard", nil, symbol: "clock.arrow.circlepath")
@@ -227,6 +242,7 @@ struct ShelfView: View {
                             pinDropped(providers, to: b)
                         }
                         .contextMenu {
+                        Button("Edit Pinboard…") { model.onEditBoard?(b) }
                         Button("Rename…") { model.onRenameBoard?(b) }
                         Menu("Colour") {
                             ForEach(HistoryStore.boardPalette, id: \.self) { hex in
@@ -281,9 +297,15 @@ struct ShelfView: View {
             Divider()
             Button("New Clip…") { model.onCommand?(.newClip) }.keyboardShortcut("n")
             Button("Settings…") { model.onCommand?(.settings) }.keyboardShortcut(",")
+            Button("Select All") { model.selectAll() }
+            if !model.marked.isEmpty { Button("Deselect All") { model.deselectAll() } }
+            Button("Import from iPhone…") { model.onCommand?(.importFromDevice) }
             Menu("Help") {
                 Button("Getting Started") { model.onCommand?(.gettingStarted) }
                 Button("Keyboard Shortcuts") { model.onCommand?(.shortcuts) }
+                Divider()
+                if model.diagnosing { Button("Stop and Copy Logs") { model.onCommand?(.stopDiagnostics) } }
+                else { Button("Start Diagnostics") { model.onCommand?(.startDiagnostics) } }
             }
             Divider()
             if let p = model.pausedUntil {
@@ -347,12 +369,20 @@ struct ShelfView: View {
         return p
     }
 
+    /// The file or web address a file or link card points at.
+    static func target(of item: ClipItem) -> URL? {
+        if item.kind == .file { return item.fileURLs?.first.flatMap { URL(string: $0) } }
+        if item.kind == .link { return item.text.flatMap { URL(string: $0.trimmingCharacters(in: .whitespacesAndNewlines)) } }
+        return nil
+    }
+
     func pinDropped(_ providers: [NSItemProvider], to board: String) -> Bool {
         guard let p = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.clipperClip.identifier) }) else { return false }
         p.loadDataRepresentation(forTypeIdentifier: UTType.clipperClip.identifier) { data, _ in
             guard let data, let s = String(data: data, encoding: .utf8), let id = UUID(uuidString: s) else { return }
             Task { @MainActor in
                 let ids = model.marked.contains(id) ? model.marked : [id]
+                if ids.count > 1, model.confirmPin?(ids.count, board) == false { return }
                 for i in ids { model.store.setPinboard(board, for: i) }
                 model.marked = []; model.refresh()
             }
@@ -385,6 +415,22 @@ struct ShelfView: View {
         Button("Paste to \(model.targetApp.map(AppInfo.name) ?? "Front App")") { model.onPick?(item, false) }
         Button("Paste as Plain Text") { model.onPick?(item, true) }
         Button("Copy") { model.onCopy?(item) }
+        if !item.isSecret, item.text != nil, item.kind != .file { Button("Copy as Plain Text") { model.onCopyPlain?(item) } }
+        if !item.isSecret, item.kind == .file || item.kind == .link {
+            Divider()
+            Button(item.kind == .link ? "Open Link" : "Open") { model.onOpen?(item, nil) }
+            if let target = ShelfView.target(of: item) {
+                let apps = NSWorkspace.shared.urlsForApplications(toOpen: target).prefix(12)
+                if !apps.isEmpty {
+                    Menu("Open With") {
+                        ForEach(Array(apps), id: \.self) { a in
+                            Button(FileManager.default.displayName(atPath: a.path).replacingOccurrences(of: ".app", with: "")) { model.onOpen?(item, a) }
+                        }
+                    }
+                }
+            }
+            if item.kind == .file { Button("Reveal in Finder") { model.onReveal?(item) } }
+        }
         Divider()
         if item.data == nil && item.fileURLs == nil && !item.isSecret {
             Button("Edit") { model.onEdit?(item) }
@@ -404,6 +450,9 @@ struct ShelfView: View {
         Divider()
         Button("Preview") { model.onPreview?(item) }
         if !item.isSecret { Button("Share…") { model.onShare?(item) } }
+        Divider()
+        Button("Select All") { model.selectAll() }
+        if !model.marked.isEmpty { Button("Deselect All") { model.deselectAll() } }
     }
 }
 
@@ -428,6 +477,12 @@ struct FilterPopover: View {
                     }
                 }
             }
+            section("Date")
+            LazyVGrid(columns: cols, spacing: 8) {
+                ForEach(DateRange.allCases, id: \.self) { r in
+                    chip(r.label, symbol: "calendar", on: model.dateRange == r) { model.dateRange = model.dateRange == r ? nil : r }
+                }
+            }
             if !model.boards.isEmpty {
                 section("Pinboard")
                 LazyVGrid(columns: cols, spacing: 8) {
@@ -436,8 +491,8 @@ struct FilterPopover: View {
                     }
                 }
             }
-            if model.kind != nil || model.app != nil {
-                Button("Clear Filters") { model.kind = nil; model.app = nil }.buttonStyle(.link)
+            if model.kind != nil || model.app != nil || model.dateRange != nil {
+                Button("Clear Filters") { model.kind = nil; model.app = nil; model.dateRange = nil }.buttonStyle(.link)
             }
         }
         .padding(14).frame(width: 440)

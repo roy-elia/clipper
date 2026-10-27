@@ -97,6 +97,7 @@ struct SettingsView: View {
     @ObservedObject var model: ShelfModel
     var accessibilityTrusted: Bool
     var mcpToken: String = ""
+    var clients: ClientsModel? = nil
     var modelNote: String = ""
     var syncAvailable = CloudKitTransport.available
     @State private var loginEnabled = LoginItem.enabled
@@ -163,6 +164,14 @@ struct SettingsView: View {
             Section("Smart features") {
                 Toggle("Open on Picks", isOn: Binding(get: { model.settings.opensOnPicks }, set: { v in model.updateSettings { $0.opensOnPicks = v } }))
                     .accessibilityIdentifier("settings.picks")
+                Picker("Show Picks", selection: Binding(get: { model.settings.suggestTrigger }, set: { v in model.updateSettings { $0.suggestTrigger = v } })) {
+                    Text("Every time the shelf opens").tag(SuggestTrigger.always)
+                    Text("When you open it from a different app").tag(SuggestTrigger.appChanged)
+                }.disabled(!model.settings.opensOnPicks).accessibilityIdentifier("settings.suggestTrigger")
+                if !SmartClassifier.isAvailable {
+                    Label("The on-device model requires Apple Intelligence. Picks still work from your paste history.", systemImage: "info.circle")
+                        .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("settings.requiresAI")
+                }
                 Toggle("Ask the on-device model about unclear clips", isOn: Binding(get: { model.settings.smartModel }, set: { v in model.updateSettings { $0.smartModel = v } }))
                     .accessibilityIdentifier("settings.smartModel")
                 Picker("Clips that look like secrets", selection: Binding(get: { model.settings.secretPolicy }, set: { v in model.updateSettings { $0.secretPolicy = v } })) {
@@ -187,15 +196,7 @@ struct SettingsView: View {
                 Toggle("Let AI tools use my clips", isOn: Binding(get: { model.settings.mcpEnabled }, set: { v in model.updateSettings { $0.mcpEnabled = v } }))
                     .accessibilityIdentifier("settings.mcp")
                 LabeledContent("Address") { Text("http://127.0.0.1:\(String(model.settings.mcpPort))/mcp").font(.caption.monospaced()).textSelection(.enabled) }
-                LabeledContent("Token") {
-                    HStack {
-                        Text(String(repeating: "•", count: 12)).foregroundStyle(.secondary)
-                        Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(mcpToken, forType: .string) }
-                            .disabled(mcpToken.isEmpty).accessibilityIdentifier("settings.copyToken")
-                    }
-                }
-                Text("Only this Mac can connect, and every request needs the token. Use clipper-mcp-stdio for clients that speak stdio.")
-                    .font(.caption).foregroundStyle(.secondary)
+                if let clients { AIToolsSection(clients: clients, model: model) }
             }
             Section("Permissions") {
                 LabeledContent("Accessibility (paste)") {

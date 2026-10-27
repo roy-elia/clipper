@@ -7,12 +7,14 @@ final class MCPServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "clipper.mcp")
     private var listener: NWListener?
     private let handler: MCPHandler
-    private let token: String
+    /// Tokens currently allowed (one per connected AI tool), read on every request so a disconnect is immediate.
+    private let tokens: @Sendable () -> Set<String>
+    private let onUse: @Sendable (String) -> Void
     let port: UInt16
     var onState: (@Sendable (String) -> Void)?
 
-    init(store: HistoryStore, token: String, port: UInt16) {
-        handler = MCPHandler(store: store); self.token = token; self.port = port
+    init(store: HistoryStore, tokens: @escaping @Sendable () -> Set<String>, onUse: @escaping @Sendable (String) -> Void = { _ in }, port: UInt16) {
+        handler = MCPHandler(store: store); self.tokens = tokens; self.onUse = onUse; self.port = port
     }
 
     static func loadToken(at url: URL) -> String {
@@ -61,9 +63,11 @@ final class MCPServer: @unchecked Sendable {
             case .bad(let s):
                 self.send(c, HTTPGate.response(status: s, reason: "Bad Request"))
             case .request(let r):
-                switch HTTPGate.authorize(r, token: self.token, port: self.port) {
+                let (verdict, matched) = HTTPGate.authorize(r, tokens: self.tokens(), port: self.port)
+                switch verdict {
                 case .status(let s, let msg): self.send(c, HTTPGate.response(status: s, reason: msg))
                 case .ok:
+                    if let m = matched { self.onUse(m) }
                     if let out = self.handler.handle(r.body) {
                         self.send(c, HTTPGate.response(status: 200, reason: "OK", body: out, json: true))
                     } else {

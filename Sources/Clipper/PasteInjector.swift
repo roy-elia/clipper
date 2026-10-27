@@ -4,8 +4,11 @@ import ApplicationServices
 /// Pastes into the frontmost app by posting ⌘V. That needs the Accessibility permission.
 enum PasteInjector {
     /// Plain-file diagnostics: unified-log redaction hides NSLog arguments for signed apps.
+    static let logURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Clipper/clipper.log")
+    /// Help ▸ Start Diagnostics: also log each capture and shelf event until stopped.
+    nonisolated(unsafe) static var verbose = false
     static func diag(_ line: String) {
-        let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Clipper/clipper.log")
+        let url = logURL
         let stamped = "\(ISO8601DateFormatter().string(from: Date())) \(line)\n"
         if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(Data(stamped.utf8)); try? h.close() }
         else { try? stamped.write(to: url, atomically: true, encoding: .utf8) }

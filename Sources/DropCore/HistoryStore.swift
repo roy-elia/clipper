@@ -109,6 +109,22 @@ public final class HistoryStore: @unchecked Sendable {
         }
     }
 
+    /// Replaces a clip's content from an editor (text with optional formatting, an edited image, a colour or a link).
+    /// Formatting kept from the source is replaced by `extras`; Clipper's own link preview data is kept.
+    @discardableResult
+    public func replaceContent(_ id: UUID, text: String?, data: Data?, extras: [String: Data]?) -> ClipItem? {
+        lock.withLock {
+            guard let i = items.firstIndex(where: { $0.id == id }) else { return nil }
+            var keep = (items[i].extras ?? [:]).filter { $0.key == "linkTitle" || $0.key == "linkImage" }
+            if items[i].text != text { keep = [:] }
+            for (k, v) in extras ?? [:] { keep[k] = v }
+            items[i].text = text; items[i].data = data; items[i].extras = keep.isEmpty ? nil : keep
+            if let t = text { items[i].title = t.split(whereSeparator: \.isNewline).first.map { String($0.prefix(120)) } ?? items[i].kind.rawValue }
+            items[i].checksum = CaptureRules.checksum(string: text, data: data)
+            items[i].modifiedAt = Date(); persist(); return items[i]
+        }
+    }
+
     public func markUsed(_ id: UUID, at date: Date = Date()) {
         lock.withLock { if let i = items.firstIndex(where: { $0.id == id }) { items[i].lastUsed = date; persist() } }
     }

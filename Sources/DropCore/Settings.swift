@@ -34,6 +34,12 @@ public struct CapturePause: Equatable, Sendable {
     public func isPaused(at now: Date = Date()) -> Bool { active && (until.map { now < $0 } ?? true) }
 }
 
+/// When the shelf opens on Picks (suggestions) instead of the full history.
+public enum SuggestTrigger: String, Codable, CaseIterable, Sendable {
+    case always        // every time the shelf opens
+    case appChanged    // only when you open it from a different app than last time
+}
+
 public struct AppSettings: Codable, Equatable, Sendable {
     public var hotkey: Hotkey = .default
     public var historyCapacity: Int = 1000
@@ -59,6 +65,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var ignoreConfidential: Bool = true
     public var ignoreTransient: Bool = true
     public var quickModifier: QuickModifier = .command
+    public var editorAutosave: Bool = false
+    public var suggestTrigger: SuggestTrigger = .always
+    public var askedDirectPaste: Bool = false
+    public var askedMoveToApplications: Bool = false
 
     public init() {}
 
@@ -95,6 +105,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         ignoreConfidential = try c.decodeIfPresent(Bool.self, forKey: .ignoreConfidential) ?? def.ignoreConfidential
         ignoreTransient = try c.decodeIfPresent(Bool.self, forKey: .ignoreTransient) ?? def.ignoreTransient
         quickModifier = try c.decodeIfPresent(QuickModifier.self, forKey: .quickModifier) ?? def.quickModifier
+        editorAutosave = try c.decodeIfPresent(Bool.self, forKey: .editorAutosave) ?? def.editorAutosave
+        suggestTrigger = try c.decodeIfPresent(SuggestTrigger.self, forKey: .suggestTrigger) ?? def.suggestTrigger
+        askedDirectPaste = try c.decodeIfPresent(Bool.self, forKey: .askedDirectPaste) ?? def.askedDirectPaste
+        askedMoveToApplications = try c.decodeIfPresent(Bool.self, forKey: .askedMoveToApplications) ?? def.askedMoveToApplications
     }
 
     public static let capacityRange = 50...10_000
