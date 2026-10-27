@@ -266,8 +266,9 @@ struct ShelfView: View {
                         Button("Rename…") { model.onRenameBoard?(b) }
                         Menu("Colour") {
                             ForEach(HistoryStore.boardPalette, id: \.self) { hex in
-                                Button { model.store.setBoardColor(b, hex); model.refresh() } label: {
-                                    Label(colorName(hex), systemImage: model.store.boardColor(b) == hex ? "checkmark.circle.fill" : "circle.fill")
+                                Toggle(isOn: Binding(get: { model.store.boardColor(b) == hex },
+                                                     set: { _ in model.store.setBoardColor(b, hex); model.refresh() })) {
+                                    Label { Text(colorName(hex)) } icon: { Image(nsImage: Self.menuDot(hex)) }
                                 }
                             }
                         }
@@ -373,6 +374,16 @@ struct ShelfView: View {
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 
+    /// A board-colour dot for menus. Not a template image, so the menu keeps its colour instead of tinting every dot alike.
+    static func menuDot(_ hex: String) -> NSImage {
+        let color = NSColor(Color(hex: hex) ?? .gray)
+        let img = NSImage(size: NSSize(width: 12, height: 12), flipped: false) { r in
+            color.setFill(); NSBezierPath(ovalIn: r.insetBy(dx: 1.5, dy: 1.5)).fill(); return true
+        }
+        img.isTemplate = false
+        return img
+    }
+
     func colorName(_ hex: String) -> String {
         ["#FF5F57": "Red", "#FFB340": "Orange", "#FFD84D": "Yellow", "#34C759": "Green", "#30B0C7": "Teal", "#3D7BFF": "Blue", "#AF52DE": "Purple", "#FF6FAF": "Pink"][hex] ?? hex
     }
@@ -464,7 +475,11 @@ struct ShelfView: View {
         Button("Delete", role: .destructive) { model.delete(item) }
         Divider()
         Menu("Pin") {
-            ForEach(model.boards, id: \.self) { b in Button(b) { model.pin(item, to: b) } }
+            ForEach(model.boards, id: \.self) { b in
+                Button { model.pin(item, to: b) } label: {
+                    Label { Text(b) } icon: { Image(nsImage: Self.menuDot(model.store.boardColor(b))) }
+                }
+            }
             if item.pinboard != nil { Divider(); Button("Unpin") { model.pin(item, to: nil) } }
         }
         Button("Add to Paste Stack") { model.stack.push(item) }
