@@ -153,23 +153,21 @@ struct ShelfView: View {
         VStack(spacing: 8) {
             bar
             if model.items.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: dropTargeted ? "arrow.down.circle" : "tray").font(.title).foregroundStyle(.secondary)
-                    if model.board != nil && model.query.isEmpty {
-                        Text("Pinboard is empty").font(.title2).foregroundStyle(.secondary)
-                        Text("Drag a card onto this pinboard's tab, or right-click a card and choose Pin.").font(.callout).foregroundStyle(.tertiary)
-                    } else {
-                        Text(model.picks ? "No suggestions yet" : model.query.isEmpty ? "Nothing copied yet. Drop images, files or text here to save them." : "No clips match")
-                            .foregroundStyle(.secondary)
-                    }
-                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack(spacing: 8) {
+                    Image(systemName: dropTargeted ? "arrow.down.circle" : emptySymbol).font(.title)
+                    Text(emptyTitle).font(.title2.weight(.semibold))
+                    Text(emptyBody).font(.callout).foregroundStyle(Palette.glassLabel2).multilineTextAlignment(.center).frame(maxWidth: 380)
+                }
+                .foregroundStyle(Palette.glassLabel)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal, showsIndicators: false) {
                         LazyHStack(spacing: 18) {
                             ForEach(Array(model.items.enumerated()), id: \.element.id) { idx, item in
                                 Card(item: item, number: model.modifierHeld && idx < 9 ? idx + 1 : nil,
-                                     selected: model.marked.isEmpty ? idx == model.selection : model.marked.contains(item.id), active: model.isKey,
+                                     selected: model.marked.isEmpty ? idx == model.selection : model.marked.contains(item.id),
+                                     marked: model.marked.contains(item.id), active: model.isKey,
                                      quickSymbol: model.settings.quickModifier.symbol,
                                      boardColor: item.pinboard.map { model.boardColor($0) },
                                      onDelete: { model.delete(item) })
@@ -206,6 +204,24 @@ struct ShelfView: View {
         .onChange(of: model.dateRange) { model.refresh() }
     }
 
+    // MARK: empty states
+
+    var emptySymbol: String {
+        if model.board != nil && model.query.isEmpty { return "tray" }
+        if !model.query.isEmpty { return "magnifyingglass" }
+        return model.picks ? "sparkles" : "doc.on.clipboard"
+    }
+    var emptyTitle: String {
+        if model.board != nil && model.query.isEmpty { return "Pinboard is empty" }
+        if !model.query.isEmpty { return "No clips match “\(model.query)”" }
+        return model.picks ? "No suggestions yet" : "Nothing copied yet"
+    }
+    var emptyBody: String {
+        if model.board != nil && model.query.isEmpty { return "Drag a card onto this pinboard's tab, or right-click a card and choose Pin." }
+        if !model.query.isEmpty { return "Try fewer words, or clear the filters." }
+        return model.picks ? "Suggestions appear as you copy and switch apps." : "Copy anything and it lands here, or drop images, files or text on the shelf."
+    }
+
     // MARK: control row
 
     var bar: some View {
@@ -218,14 +234,17 @@ struct ShelfView: View {
                     SyncButton(syncing: model.syncing, last: model.lastSynced) { model.onSyncNow?() }
                 }
                 if model.marked.count > 1 {
-                    Text("\(model.marked.count) selected").font(.caption.weight(.semibold)).foregroundStyle(Palette.accent)
+                    // A filled capsule: accent text straight on glass is 2.1:1 over a dark desktop.
+                    Text("\(model.marked.count) selected").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.onAccent)
+                        .padding(.horizontal, 10).padding(.vertical, 4).background(Palette.accentFill, in: Capsule())
                         .accessibilityIdentifier("shelf.selectedCount")
                 }
                 Spacer()
                 if !model.stack.isEmpty {
-                    Label("\(model.stack.items.count) in stack", systemImage: "square.stack.3d.up").font(.caption).foregroundStyle(.secondary)
+                    Label("\(model.stack.items.count) in stack", systemImage: "square.stack.3d.up").font(.subheadline.weight(.medium))
+                        .foregroundStyle(Palette.glassLabel).padding(.horizontal, 10).frame(height: 24).background(.quaternary, in: Capsule())
                 }
-                Text(model.items.count == 1 ? "1 clip" : "\(model.items.count) clips").font(.caption).foregroundStyle(.secondary)
+                Text(model.items.count == 1 ? "1 clip" : "\(model.items.count) clips").font(.subheadline.weight(.medium)).foregroundStyle(Palette.glassLabel2)
                     .accessibilityIdentifier("shelf.count")
                 iconButton("trash", label: "Clear history") { model.onClear?() }.accessibilityIdentifier("shelf.clear")
                 moreMenu
@@ -283,7 +302,7 @@ struct ShelfView: View {
     var searchField: some View {
         let open = searchFocused || !model.query.isEmpty
         return HStack(spacing: 5) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            Image(systemName: "magnifyingglass").foregroundStyle(Palette.glassLabel2)
             TextField("Search", text: $model.query)
                 .textFieldStyle(.plain).focused($searchFocused)
                 .onSubmit { model.pickSelected(plain: false) }
@@ -332,8 +351,8 @@ struct ShelfView: View {
     func iconButton(_ symbol: String, label: String, selected: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) { Image(systemName: symbol).frame(width: 28, height: 28).contentShape(Circle()) }
             .buttonStyle(.plain)
-            .foregroundStyle(selected ? Palette.accent : Color.primary)
-            .background(selected ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: Circle())
+            .foregroundStyle(selected ? Palette.onAccent : Palette.glassLabel)
+            .background(selected ? AnyShapeStyle(Palette.accentFill) : AnyShapeStyle(.clear), in: Circle())
             .help(label).accessibilityLabel(label)
     }
 
@@ -532,16 +551,19 @@ struct Card: View {
     let item: ClipItem
     var number: Int? = nil
     var selected = false
+    var marked = false
     var active = true
     var quickSymbol = "⌘"
     var boardColor: Color? = nil
     var onDelete: (() -> Void)? = nil
     @State private var hovering = false
     @State private var thumb: NSImage?
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
-        // Pinned cards take their pinboard's colour; others the source app's.
-        let header = boardColor ?? AppInfo.color(item.sourceBundleID)
+        // Pinned cards take their pinboard's colour; others the source app's. Shaded until its label reaches 4.5:1.
+        let header = Palette.headerFill(boardColor ?? AppInfo.color(item.sourceBundleID))
         let ink = AppInfo.ink(on: header)
         let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
         VStack(spacing: 0) {
@@ -556,7 +578,7 @@ struct Card: View {
                         Text(title).font(.headline).lineLimit(1)
                         if item.pinboard != nil { Image(systemName: "pin.fill").font(.caption2) }
                     }
-                    Text(Relative.string(from: item.createdAt)).font(.caption).opacity(0.85)
+                    Text(Relative.string(from: item.createdAt)).font(.subheadline)
                 }
                 .foregroundStyle(ink).padding(.leading, 14).padding(.top, 8).padding(.trailing, 60)
             }
@@ -566,16 +588,32 @@ struct Card: View {
                 footer
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.62))
+            // Cards are content, not glass: at 62% a busy desktop pulled footer text below 4.5:1.
+            .background(Color(nsColor: .textBackgroundColor).opacity(reduceTransparency || increased ? 1 : 0.9))
         }
         .frame(width: ShelfView.cardSize.width, height: ShelfView.cardSize.height)
         .clipShape(shape)
-        .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+        .shadow(color: Palette.cardShadow, radius: 6, y: 2)
         .padding(4)
         .overlay {
+            // A 3 pt ring outside a 1.5 pt keyline (2 pt with Increase Contrast), hugging the card at 20.5 pt corners.
             if selected {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(active ? Palette.accent : Color.secondary, lineWidth: 3)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 20.5, style: .continuous)
+                        .strokeBorder(active ? Palette.accent : Palette.ringInactive, lineWidth: 3)
+                    RoundedRectangle(cornerRadius: 17.5, style: .continuous)
+                        .strokeBorder(Palette.keyline, lineWidth: increased ? 2 : 1.5).padding(3)
+                }
+                .padding(-0.5).allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            // Marked cards also carry a check, so multi-select doesn't rely on colour alone.
+            if marked && !hovering {
+                Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)).foregroundStyle(Palette.onAccent)
+                    .frame(width: 20, height: 20).background(Palette.accentFill, in: Circle())
+                    .overlay(Circle().strokeBorder(Palette.keyline, lineWidth: 1.5))
+                    .offset(x: -2, y: -2).allowsHitTesting(false).accessibilityHidden(true)
             }
         }
         .overlay(alignment: .topLeading) {
@@ -597,22 +635,24 @@ struct Card: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
+    var increased: Bool { contrast == .increased }
     var title: String { item.customTitle ?? (item.isSecret ? "Secret" : item.kind.rawValue.capitalized) }
     var fullBleed: Bool { !item.isSecret && (item.kind == .image || item.kind == .color) }
 
     @ViewBuilder var footer: some View {
         HStack {
             Spacer(minLength: 0)
-            Text(item.detail).font(.caption).foregroundStyle(fullBleed ? Color.primary : Color.secondary).lineLimit(1)
-                .padding(.horizontal, fullBleed ? 8 : 0).padding(.vertical, fullBleed ? 3 : 0)
-                .background { if fullBleed { Capsule().fill(.ultraThinMaterial) } }
-            Spacer(minLength: 0)
-        }
-        .overlay(alignment: .trailing) {
             if let n = number {
-                Text("\(quickSymbol)\(n)").font(.caption2.monospacedDigit().weight(.semibold))
-                    .padding(.horizontal, 7).padding(.vertical, 2).background(.thinMaterial, in: Capsule())
+                // While the modifier is held the badge takes the detail's place; ink reads on every card kind.
+                Text("\(quickSymbol)\(n)").font(.caption2.monospaced().weight(.semibold)).foregroundStyle(Palette.inkOn)
+                    .padding(.horizontal, 6).padding(.vertical, 2).background(Palette.ink, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            } else {
+                // Over images and colours: black 55% pill, so white text stays above 4.5:1 even on a white image.
+                Text(item.detail).font(.subheadline).foregroundStyle(fullBleed ? Color.white : Color.secondary).lineLimit(1)
+                    .padding(.horizontal, fullBleed ? 8 : 0).padding(.vertical, fullBleed ? 2 : 0)
+                    .background { if fullBleed { Capsule().fill(.black.opacity(increased ? 0.7 : 0.55)) } }
             }
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 10).padding(.bottom, 9)
     }
@@ -641,10 +681,10 @@ struct Card: View {
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
                 if let t = item.extras?["linkTitle"].flatMap({ String(data: $0, encoding: .utf8) }) {
-                    Text(t).font(.callout.weight(.semibold)).lineLimit(item.extras?["linkImage"] == nil ? 3 : 2)
-                    Text(item.text ?? "").font(.caption).foregroundStyle(.secondary).lineLimit(item.extras?["linkImage"] == nil ? 2 : 1)
+                    Text(t).font(.callout.weight(.semibold)).foregroundStyle(Palette.brandInk).lineLimit(item.extras?["linkImage"] == nil ? 3 : 2)
+                    Text(item.text ?? "").font(.subheadline).foregroundStyle(.secondary).lineLimit(item.extras?["linkImage"] == nil ? 2 : 1)
                 } else {
-                    Image(systemName: "link").foregroundStyle(.secondary)
+                    Image(systemName: "link").foregroundStyle(Palette.accent)
                     Text(item.text ?? item.title).font(.callout).lineLimit(5)
                 }
             }.padding(14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -732,8 +772,7 @@ enum AppInfo {
     /// White or near-black, whichever reads better on the header colour.
     static func ink(on c: Color) -> Color {
         let ns = NSColor(c).usingColorSpace(.sRGB) ?? .gray
-        func lin(_ v: CGFloat) -> Double { let d = Double(v); return d <= 0.03928 ? d / 12.92 : pow((d + 0.055) / 1.055, 2.4) }
-        let L = 0.2126 * lin(ns.redComponent) + 0.7152 * lin(ns.greenComponent) + 0.0722 * lin(ns.blueComponent)
+        let L = Contrast.luminance(red: ns.redComponent, green: ns.greenComponent, blue: ns.blueComponent)
         let white = 1.05 / (L + 0.05), black = (L + 0.05) / 0.0575
         return white >= black ? .white : Color(red: 0.07, green: 0.07, blue: 0.07)
     }
