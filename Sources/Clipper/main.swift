@@ -25,7 +25,6 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var editorWindow: NSWindow?
     var importWindow: NSWindow?
     var lastShelfApp: String?
-    lazy var mcpToken = MCPServer.loadToken(at: App.tokenURL)
     var statusItem: NSStatusItem?
     var statusMenu: NSMenu?
     var clickAwayMonitor: Any?
@@ -185,22 +184,26 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         PasteInjector.diag("launch: pid \(ProcessInfo.processInfo.processIdentifier) trusted=\(PasteInjector.trusted) postEventAccess=\(CGPreflightPostEventAccess())")
     }
 
-    func window(_ title: String, _ view: some View, id: String) -> NSWindow {
-        let w = NSWindow(contentViewController: NSHostingController(rootView: view))
-        w.title = title; w.styleMask = [.titled, .closable]; w.isReleasedWhenClosed = false
+    /// takesKeyboard is false for the Paste Stack, which must leave the keyboard with the app being pasted into.
+    func window(_ title: String, _ view: some View, id: String, takesKeyboard: Bool = true) -> NSWindow {
+        let w: NSWindow = takesKeyboard
+            ? KeyWindow(contentRect: .zero, styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false)
+            : NSWindow(contentRect: .zero, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        w.contentViewController = NSHostingController(rootView: view)
+        w.title = title; w.isReleasedWhenClosed = false
         w.setFrameAutosaveName(id); w.center(); return w
     }
 
     @objc func showSettings() {
         if settingsWindow == nil {
-            settingsWindow = window("Clipper Settings", SettingsView(model: model, accessibilityTrusted: PasteInjector.trusted, mcpToken: mcpToken, clients: clientsModel, modelNote: SmartClassifier.isAvailable ? " On-device model: available." : " On-device model: not available on this Mac, rules only.", onGrant: { [weak self] in self?.grant() }), id: "settings")
+            settingsWindow = window("Clipper Settings", SettingsView(model: model, accessibilityTrusted: PasteInjector.trusted, clients: clientsModel, modelNote: SmartClassifier.isAvailable ? " On-device model: available." : " On-device model: not available on this Mac, rules only.", onGrant: { [weak self] in self?.grant() }), id: "settings")
         }
-        NSApp.activate(); settingsWindow?.makeKeyAndOrderFront(nil)
+        bringClipperForward(); settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
     @objc func showStack() {
         if stackWindow == nil {
-            stackWindow = window("Paste Stack", StackView(model: model, onPasteNext: { [weak self] in self?.pasteNext() }), id: "stack")
+            stackWindow = window("Paste Stack", StackView(model: model, onPasteNext: { [weak self] in self?.pasteNext() }), id: "stack", takesKeyboard: false)
             stackWindow?.level = .floating
         }
         stackWindow?.makeKeyAndOrderFront(nil)
@@ -261,19 +264,19 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func confirm(_ title: String, info: String = "", button: String) -> Bool {
         confirming = true; defer { confirming = false }
-        NSApp.activate()
+        bringClipperForward()
         let a = NSAlert(); a.messageText = title; a.informativeText = info
         a.addButton(withTitle: button); a.addButton(withTitle: "Cancel")
-        return a.runModal() == .alertFirstButtonReturn
+        return runAlert(a) == .alertFirstButtonReturn
     }
 
     /// 1 for the first button, 2 for the second.
     func ask3(_ title: String, info: String, first: String, second: String) -> Int {
         confirming = true; defer { confirming = false }
-        NSApp.activate()
+        bringClipperForward()
         let a = NSAlert(); a.messageText = title; a.informativeText = info
         a.addButton(withTitle: first); a.addButton(withTitle: second)
-        return a.runModal() == .alertFirstButtonReturn ? 1 : 2
+        return runAlert(a) == .alertFirstButtonReturn ? 1 : 2
     }
 
     func openTarget(_ item: ClipItem, with app: URL?) {
@@ -286,7 +289,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Edit Pinboard: name and colour in one dialog.
     func editBoard(_ name: String) {
         confirming = true; defer { confirming = false }
-        NSApp.activate()
+        bringClipperForward()
         let a = NSAlert(); a.messageText = "Edit Pinboard"
         let box = NSStackView(frame: NSRect(x: 0, y: 0, width: 260, height: 56)); box.orientation = .vertical; box.alignment = .leading
         let field = NSTextField(string: name); field.frame.size.width = 260
@@ -302,14 +305,21 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         field.widthAnchor.constraint(equalToConstant: 260).isActive = true
         a.accessoryView = box; a.addButton(withTitle: "Save"); a.addButton(withTitle: "Cancel")
         a.window.initialFirstResponder = field
-        guard a.runModal() == .alertFirstButtonReturn else { return }
+        guard runAlert(a) == .alertFirstButtonReturn else { return }
         store.setBoardColor(name, HistoryStore.boardPalette[pop.indexOfSelectedItem])
         let new = field.stringValue.trimmingCharacters(in: .whitespaces)
         if !new.isEmpty, new != name { model.renameBoard(name, new) } else { model.refresh() }
     }
 
+    /// Closing the shelf normally hands focus back to the app the user came from. When the shelf closes to open one
+    /// of Clipper's own windows, that hand-back would win and the window would open behind it, with typing going
+    /// to the other app, so skip it.
+    func hideShelfForOwnWindow() {
+        (panel as? ShelfPanel)?.previousApp = nil; panel?.orderOut(nil)
+    }
+
     func openEditor(_ item: ClipItem) {
-        panel?.orderOut(nil)
+        hideShelfForOwnWindow()
         guard !item.isSecret, item.fileURLs == nil else { preview(item); return }
         let close: () -> Void = { [weak self] in self?.editorWindow?.close(); self?.editorWindow = nil }
         let view = ClipEditorView(item: item, autosave: model.settings.editorAutosave,
@@ -317,13 +327,13 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                   onSave: { [weak self] e in self?.store.replaceContent(item.id, text: e.text, data: e.data, extras: e.extras); self?.model.refresh() },
                                   onClose: close)
         if editorWindow == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 460), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+            let w = KeyWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 460), styleMask: [.titled, .closable, .resizable, .nonactivatingPanel], backing: .buffered, defer: false)
             w.isReleasedWhenClosed = false; editorWindow = w
         }
         editorWindow?.title = view.title
         editorWindow?.contentView = NSHostingView(rootView: view)
         applyPrivacy()
-        editorWindow?.center(); NSApp.activate(); editorWindow?.makeKeyAndOrderFront(nil)
+        editorWindow?.center(); bringClipperForward(); editorWindow?.makeKeyAndOrderFront(nil)
     }
 
     /// Run from Downloads or a disk image, offer once to move into ~/Applications (no admin password needed).
@@ -341,14 +351,14 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/open"); p.arguments = ["-n", dest.path]
             try p.run(); NSApp.terminate(nil)
         } catch {
-            let a = NSAlert(); a.messageText = "Could not move to Applications folder"; a.informativeText = error.localizedDescription; a.runModal()
+            let a = NSAlert(); a.messageText = "Could not move to Applications folder"; a.informativeText = error.localizedDescription; _ = runAlert(a)
         }
     }
 
     /// Import from iPhone: Continuity Camera (Take Photo, Scan Documents) into a new clip.
     func showImport() {
         if importWindow == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 200), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            let w = KeyWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 200), styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false)
             w.title = "Import from iPhone"; w.isReleasedWhenClosed = false
             let v = ContinuityImportView(frame: w.contentRect(forFrameRect: w.frame))
             v.onImage = { [weak self] data in
@@ -360,7 +370,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             w.contentView = v; importWindow = w
         }
-        importWindow?.center(); NSApp.activate(); importWindow?.makeKeyAndOrderFront(nil)
+        importWindow?.center(); bringClipperForward(); importWindow?.makeKeyAndOrderFront(nil)
         importWindow?.makeFirstResponder(importWindow?.contentView)
     }
 
@@ -383,12 +393,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func ask(_ title: String, value: String, button: String) -> String? {
         confirming = true; defer { confirming = false }
-        NSApp.activate()
+        bringClipperForward()
         let a = NSAlert(); a.messageText = title
         let f = NSTextField(string: value); f.frame = NSRect(x: 0, y: 0, width: 260, height: 24); f.placeholderString = "Name"
         a.accessoryView = f; a.addButton(withTitle: button); a.addButton(withTitle: "Cancel")
         a.window.initialFirstResponder = f
-        return a.runModal() == .alertFirstButtonReturn ? f.stringValue : nil
+        return runAlert(a) == .alertFirstButtonReturn ? f.stringValue : nil
     }
 
     func renameClip(_ item: ClipItem) {
@@ -403,16 +413,16 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func run(_ c: ShelfCommand) {
         switch c {
-        case .about: panel?.orderOut(nil); showAbout()
-        case .newClip: panel?.orderOut(nil); showNewClip()
-        case .settings: panel?.orderOut(nil); showSettings()
-        case .gettingStarted: panel?.orderOut(nil); showGettingStarted()
-        case .shortcuts: panel?.orderOut(nil); showShortcuts()
+        case .about: hideShelfForOwnWindow(); showAbout()
+        case .newClip: hideShelfForOwnWindow(); showNewClip()
+        case .settings: hideShelfForOwnWindow(); showSettings()
+        case .gettingStarted: hideShelfForOwnWindow(); showGettingStarted()
+        case .shortcuts: hideShelfForOwnWindow(); showShortcuts()
         case .pause(let d): setPause(d)
         case .resume: resume()
         case .clear: confirmClear()
         case .quit: NSApp.terminate(nil)
-        case .importFromDevice: panel?.orderOut(nil); showImport()
+        case .importFromDevice: hideShelfForOwnWindow(); showImport()
         case .startDiagnostics:
             PasteInjector.verbose = true; model.diagnosing = true
             PasteInjector.diag("diagnostics started: version \(App.version) build \(App.build), macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
@@ -448,18 +458,25 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func showShortcuts() {
         if shortcutsWindow == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 420), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            let w = KeyWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 420), styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false)
             w.title = "Keyboard Shortcuts"; w.isReleasedWhenClosed = false
             w.contentView = NSHostingView(rootView: ShortcutsView(settings: model.settings))
             shortcutsWindow = w
         }
         shortcutsWindow?.contentView = NSHostingView(rootView: ShortcutsView(settings: model.settings))
-        shortcutsWindow?.center(); NSApp.activate(); shortcutsWindow?.makeKeyAndOrderFront(nil)
+        shortcutsWindow?.center(); bringClipperForward(); shortcutsWindow?.makeKeyAndOrderFront(nil)
     }
 
     func installPanelShortcuts() {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
-            guard let self, let panel, panel.isVisible, e.window === panel, !model.namingBoard else { return e }
+            guard let self, let panel, panel.isVisible, e.window === panel else { return e }
+            // While a new pinboard is being named, Return and Esc belong to that field. SwiftUI can hand the
+            // field's Return to the search field's submit action, which would paste the selected clip.
+            if model.namingBoard {
+                if e.keyCode == 36 || e.keyCode == 76 { model.finishNamingBoard?(true); return nil }
+                if e.keyCode == 53 { model.finishNamingBoard?(false); return nil }
+                return e
+            }
             let mods = e.modifierFlags.intersection([.command, .option, .control, .shift])
             // ⇧Return pastes as plain text; the text field would otherwise turn it into a line break.
             if mods == .shift, e.keyCode == 36 || e.keyCode == 76 { model.pickTargets(plain: true); return nil }
@@ -604,7 +621,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self?.whatsNewWindow?.close(); self?.whatsNewWindow = nil
             }), id: "whatsnew")
             model.updateSettings { $0.lastSeenVersion = App.version }
-            NSApp.activate(); whatsNewWindow?.makeKeyAndOrderFront(nil)
+            bringClipperForward(); whatsNewWindow?.makeKeyAndOrderFront(nil)
         }
     }
 
@@ -615,7 +632,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 model.updateSettings { $0.onboarded = true; $0.lastSeenVersion = App.version }
                 onboardingWindow?.close(); onboardingWindow = nil
             }), id: "onboarding")
-            NSApp.activate(); onboardingWindow?.makeKeyAndOrderFront(nil)
+            bringClipperForward(); onboardingWindow?.makeKeyAndOrderFront(nil)
         }
     }
 
@@ -628,7 +645,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func showAbout() {
         if aboutWindow == nil { aboutWindow = window("About Clipper", AboutView(version: App.version, build: App.build), id: "about") }
-        NSApp.activate(); aboutWindow?.makeKeyAndOrderFront(nil)
+        bringClipperForward(); aboutWindow?.makeKeyAndOrderFront(nil)
     }
 
     var newClipWindow: NSWindow?
@@ -641,7 +658,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             store.add(item); model.refresh(); newClipWindow?.close(); newClipWindow = nil
         }, onCancel: { [weak self] in self?.newClipWindow?.close(); self?.newClipWindow = nil })
         newClipWindow = window("New Clip", view, id: "newclip")
-        NSApp.activate(); newClipWindow?.makeKeyAndOrderFront(nil)
+        bringClipperForward(); newClipWindow?.makeKeyAndOrderFront(nil)
     }
 
     func applySpotlight() {
@@ -700,9 +717,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// The single token from earlier versions becomes the first connected tool, so existing setups keep working.
+    /// The file is removed afterwards, so disconnecting that tool really revokes it instead of it coming back on
+    /// the next launch.
     func migrateMCPToken() {
-        guard mcpClients.all.isEmpty, FileManager.default.fileExists(atPath: App.tokenURL.path) else { return }
-        mcpClients.add("Existing connection", token: mcpToken); clientsModel.reload()
+        guard let old = try? String(contentsOf: App.tokenURL, encoding: .utf8) else { return }
+        if mcpClients.all.isEmpty, old.count == 64 { mcpClients.add("Existing connection", token: old); clientsModel.reload() }
+        try? FileManager.default.removeItem(at: App.tokenURL)
     }
 
     /// Starts, restarts or stops the MCP server to match settings.
@@ -735,7 +755,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let total = store.all.count, pinned = store.all.filter { $0.pinboard != nil }.count
         guard total > 0 else { osd.show("Nothing to clear", symbol: "tray", hideFromSharing: model.settings.hideFromSharing); return }
         confirming = true; defer { confirming = false }
-        NSApp.activate()
+        bringClipperForward()
         let a = NSAlert()
         a.messageText = "Clear all saved clips?"
         a.informativeText = "This deletes \(total) saved \(total == 1 ? "clip" : "clips") from Clipper and its synced copies. It cannot be undone."
@@ -743,7 +763,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         a.addButton(withTitle: "Delete All")
         if pinned > 0 { a.addButton(withTitle: "Keep Pinned (\(pinned))") }
         a.addButton(withTitle: "Cancel")
-        let r = a.runModal()
+        let r = runAlert(a)
         let keep: Bool
         switch (r, pinned > 0) {
         case (.alertFirstButtonReturn, _): keep = false
@@ -846,7 +866,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             p.setFrame(reduce ? end : end.offsetBy(dx: 0, dy: -(h + inset)), display: false)
             p.alphaValue = reduce ? 0 : 1
-            NSApp.activate(); p.makeKeyAndOrderFront(nil)
+            bringClipperForward(); p.makeKeyAndOrderFront(nil)
             NSAnimationContext.runAnimationGroup { c in
                 c.duration = reduce ? 0.15 : 0.32
                 c.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
@@ -887,6 +907,37 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 }
 
 /// Non-activating so the app you are pasting into stays frontmost, yet still able to take typing for search.
+/// A window that takes the keyboard without making Clipper the active app. Clipper is a menu bar app and its
+/// shelf never takes focus, so macOS refuses to activate it from a click there; an ordinary window would open
+/// behind the app the user came from and their typing would go to that app.
+final class KeyWindow: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+    override init(contentRect: NSRect, styleMask: NSWindow.StyleMask, backing: NSWindow.BackingStoreType, defer flag: Bool) {
+        super.init(contentRect: contentRect, styleMask: styleMask, backing: backing, defer: flag)
+        hidesOnDeactivate = false; becomesKeyOnlyIfNeeded = false
+    }
+}
+
+/// Clipper has no menu bar of its own to show, but the Edit and Format items still give text fields and the
+/// editor their standard shortcuts (⌘X ⌘C ⌘V ⌘A ⌘Z ⌘B ⌘I ⌘U).
+@MainActor func installEditMenu() {
+    let main = NSMenu()
+    let edit = NSMenu(title: "Edit")
+    func add(_ m: NSMenu, _ t: String, _ sel: String, _ key: String, _ mods: NSEvent.ModifierFlags = .command) {
+        let i = NSMenuItem(title: t, action: Selector(sel), keyEquivalent: key); i.keyEquivalentModifierMask = mods; m.addItem(i)
+    }
+    add(edit, "Undo", "undo:", "z"); add(edit, "Redo", "redo:", "z", [.command, .shift]); edit.addItem(.separator())
+    add(edit, "Cut", "cut:", "x"); add(edit, "Copy", "copy:", "c"); add(edit, "Paste", "paste:", "v")
+    add(edit, "Paste and Match Style", "pasteAsPlainText:", "v", [.command, .option, .shift]); add(edit, "Select All", "selectAll:", "a")
+    let format = NSMenu(title: "Format")
+    add(format, "Bold", "addFontTrait:", "b"); format.items.last?.tag = Int(NSFontTraitMask.boldFontMask.rawValue)
+    add(format, "Italic", "addFontTrait:", "i"); format.items.last?.tag = Int(NSFontTraitMask.italicFontMask.rawValue)
+    add(format, "Underline", "underline:", "u")
+    for m in [NSMenu(title: "Clipper"), edit, format] { let i = NSMenuItem(); i.submenu = m; main.addItem(i) }
+    NSApp.mainMenu = main
+}
+
 final class ShelfPanel: NSPanel {
     /// The app that was frontmost when the panel opened. Making this panel key takes key status from that app's
     /// window, so closing the panel must hand it back or the next keystroke (including our ⌘V) goes nowhere.
@@ -1007,4 +1058,5 @@ if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLi
 let delegate = MainActor.assumeIsolated { App() }
 app.delegate = delegate
 app.setActivationPolicy(.accessory)
+installEditMenu()
 app.run()

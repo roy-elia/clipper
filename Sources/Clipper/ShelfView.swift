@@ -40,6 +40,7 @@ final class ShelfModel: ObservableObject {
     @Published var syncing = false
     @Published var diagnosing = false
     @Published var namingBoard = false     // the inline new-pinboard field has the keyboard
+    var finishNamingBoard: ((Bool) -> Void)?   // true creates the pinboard, false cancels
     @Published var lastSynced: Date?
     var onPickMany: (([ClipItem], Bool) -> Void)?
     var onDeleted: ((Int) -> Void)?
@@ -95,7 +96,7 @@ final class ShelfModel: ObservableObject {
 
     func move(_ delta: Int) { guard !items.isEmpty else { return }; selection = min(max(selection + delta, 0), items.count - 1) }
     var selected: ClipItem? { items.indices.contains(selection) ? items[selection] : nil }
-    func pickSelected(plain: Bool) { if let i = selected { onPick?(i, plain) } }
+    func pickSelected(plain: Bool) { if !namingBoard, let i = selected { onPick?(i, plain) } }
     func pick(number n: Int) { if items.indices.contains(n - 1) { onPick?(items[n - 1], false) } }
     /// ⌘] and ⌘[ : step through Picks, History and the pinboards in tab order.
     func cycleBoard(_ d: Int) {
@@ -266,8 +267,11 @@ struct ShelfView: View {
                     }
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .overlay(Capsule().strokeBorder(Palette.accent, lineWidth: 2))
-                    .onAppear { model.namingBoard = true; searchFocused = false; DispatchQueue.main.async { boardFieldFocused = true } }
-                    .onDisappear { model.namingBoard = false; searchFocused = true }
+                    .onAppear {
+                        model.finishNamingBoard = { create in if create { model.addBoard(newBoard) }; newBoard = ""; adding = false }
+                        model.namingBoard = true; searchFocused = false; DispatchQueue.main.async { boardFieldFocused = true }
+                    }
+                    .onDisappear { model.namingBoard = false; model.finishNamingBoard = nil; searchFocused = true }
                 } else {
                     iconButton("plus", label: "New pinboard") { adding = true }.accessibilityIdentifier("shelf.addBoard")
                 }
@@ -432,7 +436,7 @@ struct ShelfView: View {
             if item.kind == .file { Button("Reveal in Finder") { model.onReveal?(item) } }
         }
         Divider()
-        if item.data == nil && item.fileURLs == nil && !item.isSecret {
+        if item.fileURLs == nil && !item.isSecret {
             Button("Edit") { model.onEdit?(item) }
             if item.kind == .text { Button("Writing Tools") { model.onWritingTools?(item) } }
         }

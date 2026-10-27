@@ -102,8 +102,14 @@ struct FormattedTextEditor: View {
     }
 
     func report() {
-        let s = view.attributedString()
-        let rtf = s.length > 0 ? s.rtf(from: NSRange(location: 0, length: s.length)) : nil
+        // The editor shows text in the system text colour; keep that out of the saved formatting so a paste into
+        // a light document doesn't come out white. Colours the text really has are kept.
+        let s = NSMutableAttributedString(attributedString: view.attributedString())
+        let all = NSRange(location: 0, length: s.length)
+        s.enumerateAttribute(.foregroundColor, in: all) { v, r, _ in
+            if let c = v as? NSColor, c.type == .catalog { s.removeAttribute(.foregroundColor, range: r) }
+        }
+        let rtf = s.length > 0 ? s.rtf(from: all) : nil
         onChange(s.string, rtf)
     }
 

@@ -21,3 +21,15 @@
   Copy Logs; Import from iPhone (Continuity Camera).
 - Verified without the screen: 87 tests, self-test, snapshots; per-tool MCP tokens over HTTP and via the stdio bridge.
 - Not verified live (screen locked): every new window and menu item above.
+2026-10-27 live test of the third pass (scratch history, keys sent only to Clipper's process)
+- Verified live: Edit for image/colour/link/text cards (none for files); image rotate, remove and restore background;
+  colour and link saved from typed input; text editor saves without the system text colour in its RTF; Open,
+  Reveal in Finder; Copy as Plain Text (no RTF); Select All / Deselect All; Date chips; Edit Pinboard; Untitled
+  pinboard on empty name; Esc cancels naming; "Pin 2 clips to …?" on dragging two marked cards; AI tools connect,
+  copy (transient, not saved), disconnect, port change; Diagnostics start / stop and copy; Writing Tools panel;
+  Rename; Keyboard Shortcuts and Import from iPhone windows open.
+- Fixed: Edit missing for image cards; RTF baked in white text; windows and dialogs opened behind the front app
+  with typing going there (now key without activating, like the shelf); no Edit menu, so ⌘C/⌘V/⌘A/⌘Z did nothing
+  in text fields; Return in the new-pinboard field also pasted the selected clip; disconnecting every AI tool
+  brought the old shared token back on relaunch; snippet Copy buttons had no accessibility identifiers.
+- Not verified: Continuity Camera with a real iPhone (menu lists no device here); Open With submenu contents.

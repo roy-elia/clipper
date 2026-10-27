@@ -45,7 +45,7 @@ struct AIToolsSection: View {
         LabeledContent("Server port") {
             HStack {
                 TextField("", text: $portText).frame(width: 70).textFieldStyle(.roundedBorder).accessibilityIdentifier("ai.port")
-                Button("Change") { changePort() }.disabled(UInt16(portText) == nil || UInt16(portText) == model.settings.mcpPort)
+                Button("Change") { changePort() }.accessibilityIdentifier("ai.portChange").disabled(UInt16(portText) == nil || UInt16(portText) == model.settings.mcpPort)
             }
         }
         .onAppear { portText = String(model.settings.mcpPort) }
@@ -57,7 +57,7 @@ struct AIToolsSection: View {
         let a = NSAlert(); a.messageText = "Disconnect “\(c.name)”?"
         a.informativeText = "It will no longer be able to read your clips. Connect it again to get a new token."
         a.addButton(withTitle: "Disconnect"); a.addButton(withTitle: "Cancel")
-        if a.runModal() == .alertFirstButtonReturn { clients.remove(c) }
+        if runAlert(a) == .alertFirstButtonReturn { clients.remove(c) }
     }
 
     func changePort() {
@@ -65,7 +65,7 @@ struct AIToolsSection: View {
         let a = NSAlert(); a.messageText = "Change the server port to \(p)?"
         a.informativeText = "Connected tools keep their tokens but must be pointed at the new address."
         a.addButton(withTitle: "Change"); a.addButton(withTitle: "Cancel")
-        if a.runModal() == .alertFirstButtonReturn { model.updateSettings { $0.mcpPort = p } } else { portText = String(model.settings.mcpPort) }
+        if runAlert(a) == .alertFirstButtonReturn { model.updateSettings { $0.mcpPort = p } } else { portText = String(model.settings.mcpPort) }
     }
 }
 
@@ -109,7 +109,7 @@ struct ConnectToolSheet: View {
                 .accessibilityIdentifier(id + ".copy")
         }
         .padding(10).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-        .accessibilityIdentifier(id)
+        .accessibilityElement(children: .contain).accessibilityIdentifier(id)
     }
 }
 
@@ -121,4 +121,37 @@ func copyWithoutSaving(_ s: String) {
     pb.declareTypes([.string, NSPasteboard.PasteboardType("org.nspasteboard.TransientType")], owner: nil)
     pb.setString(s, forType: .string)
     pb.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
+}
+
+/// Brings Clipper to the front for a window that needs the keyboard. The polite activate() can be refused by
+/// macOS when another app is active, which would send typing to that app instead.
+@MainActor func bringClipperForward() {
+    NSApp.activate(ignoringOtherApps: true)
+}
+
+/// Runs an alert that takes the keyboard even while another app is active, for the same reason as KeyWindow:
+/// Clipper often can't become the active app, and an ordinary alert would leave typing going to that app. The
+/// alert's own layout is moved into a KeyWindow, since that ability can only be given to a window when it's made.
+@MainActor func runAlert(_ a: NSAlert) -> NSApplication.ModalResponse {
+    let wanted = a.window.initialFirstResponder
+    a.layout()
+    let src = a.window
+    let w = KeyWindow(contentRect: src.contentRect(forFrameRect: src.frame), styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
+    w.title = ""; w.titleVisibility = .hidden; w.titlebarAppearsTransparent = true
+    w.isMovableByWindowBackground = true; w.level = .modalPanel
+    let content = src.contentView; src.contentView = NSView(); w.contentView = content
+    for case let b as NSButton in a.buttons {
+        b.target = AlertStopper.shared; b.action = #selector(AlertStopper.stop(_:))
+    }
+    w.center(); w.makeKeyAndOrderFront(nil)
+    if let f = wanted { w.makeFirstResponder(f) }
+    let r = NSApp.runModal(for: w)
+    w.orderOut(nil)
+    return r
+}
+
+/// Ends the modal session with the pressed button's position (first, second, third), like NSAlert does.
+@MainActor final class AlertStopper: NSObject {
+    static let shared = AlertStopper()
+    @objc func stop(_ b: NSButton) { NSApp.stopModal(withCode: NSApplication.ModalResponse(rawValue: b.tag)) }
 }
