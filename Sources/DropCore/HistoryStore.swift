@@ -109,6 +109,18 @@ public final class HistoryStore: @unchecked Sendable {
         }
     }
 
+    public func markUsed(_ id: UUID, at date: Date = Date()) {
+        lock.withLock { if let i = items.firstIndex(where: { $0.id == id }) { items[i].lastUsed = date; persist() } }
+    }
+
+    /// "Untitled", "Untitled 2", … — the first name no pinboard uses yet.
+    public func freeBoardName(_ base: String = "Untitled") -> String {
+        let used = Set(pinboards())
+        if !used.contains(base) { return base }
+        var n = 2; while used.contains("\(base) \(n)") { n += 1 }
+        return "\(base) \(n)"
+    }
+
     public func item(_ id: UUID) -> ClipItem? { lock.withLock { items.first { $0.id == id } } }
 
     /// Edits the text of a text-like clip, recomputing its checksum and title. Returns nil for unknown or image clips.

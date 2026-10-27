@@ -41,6 +41,14 @@ public enum HTTPGate {
     public enum Verdict: Sendable, Equatable { case ok, status(Int, String) }
 
     /// Auth and DNS-rebinding checks, in the order they should fail.
+    /// Same checks against any of several tokens (one per connected AI tool); also returns the token that matched.
+    public static func authorize(_ r: HTTPRequest, tokens: Set<String>, port: UInt16) -> (Verdict, String?) {
+        let bearer = r.headers["authorization"].flatMap { $0.hasPrefix("Bearer ") ? String($0.dropFirst(7)) : nil }
+        let match = bearer.flatMap { b in tokens.first { constantTimeEqual($0, b) } }
+        // With no match, check against a value no client can send so the usual 401 comes back.
+        return (authorize(r, token: match ?? "\u{0}no-token", port: port), match)
+    }
+
     public static func authorize(_ r: HTTPRequest, token: String, port: UInt16) -> Verdict {
         let allowedHosts: Set<String> = ["127.0.0.1:\(port)", "localhost:\(port)", "[::1]:\(port)"]
         guard let host = r.headers["host"], allowedHosts.contains(host.lowercased()) else { return .status(403, "Forbidden host") }

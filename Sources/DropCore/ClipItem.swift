@@ -26,6 +26,8 @@ public struct ClipItem: Codable, Sendable, Equatable, Identifiable {
     public var modifiedAt: Date?
     /// A name the user gave the clip (Rename); shown instead of the kind on the card.
     public var customTitle: String?
+    /// When the clip was last pasted or copied back out of Clipper; nil means never.
+    public var lastUsed: Date?
 
     public init(id: UUID = UUID(), kind: ClipKind, title: String, text: String? = nil, data: Data? = nil,
                 sourceBundleID: String? = nil, checksum: String, createdAt: Date = Date(), pinboard: String? = nil,
