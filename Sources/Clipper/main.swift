@@ -197,6 +197,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func showSettings() {
         if settingsWindow == nil {
             settingsWindow = window("Clipper Settings", SettingsView(model: model, accessibilityTrusted: PasteInjector.trusted, clients: clientsModel, modelNote: SmartClassifier.isAvailable ? " On-device model: available." : " On-device model: not available on this Mac, rules only.", onGrant: { [weak self] in self?.grant() }), id: "settings")
+            // The sidebar runs to the top of the window, under the traffic lights.
+            settingsWindow?.styleMask.insert(.fullSizeContentView)
+            settingsWindow?.titlebarAppearsTransparent = true
+            settingsWindow?.toolbarStyle = .unified
         }
         bringClipperForward(); settingsWindow?.makeKeyAndOrderFront(nil)
     }
@@ -499,7 +503,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if let c = e.charactersIgnoringModifiers {
                 if c == "c", model.query.isEmpty || panel.firstResponder as? NSTextView == nil, let i = model.selected { copyOnly(i); return nil }
                 if c == "e", let i = model.selected { openEditor(i); return nil }
-                if c == "f" { model.focusTick += 1; return nil }
+                if c == "f" { model.focusTick += 1; model.searchTick += 1; return nil }
                 if c == "g", let i = model.selected, let b = i.pinboard { model.picks = false; model.board = b; model.refresh(); return nil }
                 if c == "a", model.query.isEmpty { model.marked = model.items.map(\.id); return nil }
                 if c == "r", let i = model.selected { renameClip(i); return nil }

@@ -89,7 +89,9 @@ func runSnapshots(into dir: String) -> Int32 {
         _ = render(PreviewView(item: item), appearance: ap, large: large, to: out("Preview")); count += 1
         if let t = m.store.all.first(where: { $0.kind == ClipKind.text && !$0.isSecret && !$0.isRich }) { _ = render(PreviewView(item: t, startEditing: true), appearance: ap, large: large, to: out("Preview-Edit")); count += 1 }
         _ = render(StackView(model: m, onPasteNext: {}), appearance: ap, large: large, to: out("Stack")); count += 1
-        _ = render(SettingsView(model: m, accessibilityTrusted: false, mcpToken: "x"), appearance: ap, large: large, to: out("Settings")); count += 1
+        for pane in SettingsPane.allCases {
+            _ = render(SettingsView(model: m, accessibilityTrusted: false, mcpToken: "x", pane: pane), appearance: ap, large: large, to: out(pane == .general ? "Settings" : "Settings-\(pane.rawValue)")); count += 1
+        }
         _ = render(NewClipView(boards: m.boards, onSave: { _, _ in }, onCancel: {}), appearance: ap, large: large, to: out("NewClip")); count += 1
         _ = render(OnboardingView(hotkey: .default, onGrant: {}, onFinish: {}), appearance: ap, large: large, to: out("Onboarding")); count += 1
         _ = render(WhatsNewView(version: "0.2.0", onClose: {}), appearance: ap, large: large, to: out("WhatsNew")); count += 1

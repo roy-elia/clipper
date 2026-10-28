@@ -93,6 +93,19 @@ struct StackView: View {
     }
 }
 
+/// The sections of the Settings window's sidebar.
+enum SettingsPane: String, CaseIterable, Identifiable {
+    case general, picks, privacy, shortcuts, aiTools
+    var id: String { rawValue }
+    var title: String {
+        switch self { case .general: "General"; case .picks: "Picks"; case .privacy: "Privacy"; case .shortcuts: "Shortcuts"; case .aiTools: "AI Tools" }
+    }
+    var symbol: String {
+        switch self { case .general: "gearshape"; case .picks: "sparkles"; case .privacy: "hand.raised"; case .shortcuts: "keyboard"; case .aiTools: "point.3.connected.trianglepath.dotted" }
+    }
+}
+
+/// Settings: a sidebar of sections, each a grouped form.
 struct SettingsView: View {
     @ObservedObject var model: ShelfModel
     var accessibilityTrusted: Bool
@@ -100,115 +113,229 @@ struct SettingsView: View {
     var clients: ClientsModel? = nil
     var modelNote: String = ""
     var syncAvailable = CloudKitTransport.available
+    @State var pane: SettingsPane = .general
     @State private var loginEnabled = LoginItem.enabled
     var onGrant: () -> Void = {}
+
     var body: some View {
-        Form {
-            Section("General") {
-                LabeledContent("Open shelf") {
-                    HotkeyRecorder(current: model.settings.hotkey) { hk in model.updateSettings { $0.hotkey = hk } }.id(model.settings.hotkey)
-                }
-                LabeledContent("Paste next in stack") {
-                    HotkeyRecorder(current: model.settings.stackHotkey) { hk in model.updateSettings { $0.stackHotkey = hk } }.id(model.settings.stackHotkey)
-                }
-                Picker("Quick paste", selection: Binding(get: { model.settings.quickModifier }, set: { v in model.updateSettings { $0.quickModifier = v } })) {
-                    ForEach(QuickModifier.allCases, id: \.self) { Text("\($0.symbol) + 1…9").tag($0) }
-                }.accessibilityIdentifier("settings.quickModifier")
-                HStack { Spacer(); Button("Reset Shortcuts to Default") { model.updateSettings { $0.resetShortcuts() } }.accessibilityIdentifier("settings.resetShortcuts") }
-                Toggle("Open at login", isOn: Binding(get: { loginEnabled }, set: { v in LoginItem.set(v); loginEnabled = LoginItem.enabled }))
-                    .accessibilityIdentifier("settings.login")
-                Toggle("Index clips in Spotlight", isOn: Binding(get: { model.settings.spotlightEnabled }, set: { v in model.updateSettings { $0.spotlightEnabled = v } }))
-                    .accessibilityIdentifier("settings.spotlight")
-                Toggle("Play sounds", isOn: Binding(get: { model.settings.playSounds }, set: { v in model.updateSettings { $0.playSounds = v } }))
-                    .accessibilityIdentifier("settings.sounds")
+        NavigationSplitView {
+            List(SettingsPane.allCases, selection: Binding(get: { pane }, set: { if let p = $0 { pane = p } })) { p in
+                Label(p.title, systemImage: p.symbol).tag(p).accessibilityIdentifier("settings.pane.\(p.rawValue)")
             }
-            Section("Behaviour") {
-                Picker("Picking a clip", selection: Binding(get: { model.settings.pasteTarget }, set: { v in model.updateSettings { $0.pasteTarget = v } })) {
-                    Text("Pastes it into the front app").tag(PasteTarget.activeApp)
-                    Text("Copies it to the clipboard").tag(PasteTarget.clipboard)
-                }.pickerStyle(.radioGroup).accessibilityIdentifier("settings.pasteTarget")
-                Toggle("Always paste as plain text", isOn: Binding(get: { model.settings.alwaysPlain }, set: { v in model.updateSettings { $0.alwaysPlain = v } }))
-                    .accessibilityIdentifier("settings.alwaysPlain")
-                Toggle("Show in menu bar", isOn: Binding(get: { model.settings.showMenuBarIcon }, set: { v in model.updateSettings { $0.showMenuBarIcon = v } }))
-                    .accessibilityIdentifier("settings.menuBar")
-                Text("With the icon hidden, open Clipper again from Spotlight or Finder, or use the hotkey, to show the shelf.").font(.caption).foregroundStyle(.secondary)
-                Toggle("Fetch page titles for copied links", isOn: Binding(get: { model.settings.linkPreviews }, set: { v in model.updateSettings { $0.linkPreviews = v } }))
-                    .accessibilityIdentifier("settings.linkPreviews")
-                Text("Sends a request to the link's site when you copy it. Off by default.").font(.caption).foregroundStyle(.secondary)
-            }
-            Section("History") {
-                Picker("Keep history", selection: Binding(get: { model.settings.retention }, set: { v in model.updateSettings { $0.retention = v } })) {
-                    ForEach(Retention.allCases, id: \.self) { Text($0.label).tag($0) }
-                }.accessibilityIdentifier("settings.retention")
-                LabeledContent("Keep up to") {
-                    HStack {
-                        Slider(value: Binding(get: { Double(model.settings.historyCapacity) },
-                                              set: { v in model.updateSettings { $0.setCapacity(Int(v)) } }),
-                               in: Double(AppSettings.capacityRange.lowerBound)...Double(AppSettings.capacityRange.upperBound), step: 50)
-                            .frame(width: 180).accessibilityIdentifier("settings.capacity")
-                        Text("\(model.settings.historyCapacity)").monospacedDigit().frame(width: 52, alignment: .trailing)
+            .navigationSplitViewColumnWidth(min: 220, ideal: 220, max: 220)
+            .toolbar(removing: .sidebarToggle)
+        } detail: {
+            Form { content }
+                .formStyle(.grouped)
+                .navigationTitle(pane.title)
+        }
+        .frame(width: 720, height: 560)
+        .clipperStyle()
+    }
+
+    @ViewBuilder var content: some View {
+        switch pane {
+        case .general: general
+        case .picks: picks
+        case .privacy: privacy
+        case .shortcuts: shortcuts
+        case .aiTools: aiTools
+        }
+    }
+
+    func setting<T>(_ key: WritableKeyPath<AppSettings, T>) -> Binding<T> {
+        Binding(get: { model.settings[keyPath: key] }, set: { v in model.updateSettings { $0[keyPath: key] = v } })
+    }
+
+    // MARK: General
+
+    @ViewBuilder var general: some View {
+        Section {
+            Toggle("Open at login", isOn: Binding(get: { loginEnabled }, set: { v in LoginItem.set(v); loginEnabled = LoginItem.enabled }))
+                .accessibilityIdentifier("settings.login")
+            Toggle(isOn: setting(\.showMenuBarIcon)) {
+                Text("Show in menu bar")
+                Text("With the icon hidden, open Clipper from Spotlight or Finder, or use the shortcut.")
+            }.accessibilityIdentifier("settings.menuBar")
+            Toggle(isOn: setting(\.iCloudSync)) {
+                HStack {
+                    Text("Sync clips with iCloud")
+                    Spacer()
+                    if model.settings.iCloudSync {
+                        Text(SyncButton.status(syncing: model.syncing, last: model.lastSynced)).foregroundStyle(.secondary).accessibilityIdentifier("settings.syncStatus")
                     }
                 }
-                Text("Clips on a pinboard are never removed.").font(.caption).foregroundStyle(.secondary)
-            }
-            Section("Privacy") {
-                Toggle("Hide Clipper from screen sharing and recordings", isOn: Binding(get: { model.settings.hideFromSharing }, set: { v in model.updateSettings { $0.hideFromSharing = v } }))
-                    .accessibilityIdentifier("settings.hideSharing")
-                Toggle("Skip passwords other apps mark as confidential", isOn: Binding(get: { model.settings.ignoreConfidential }, set: { v in model.updateSettings { $0.ignoreConfidential = v } }))
-                    .accessibilityIdentifier("settings.ignoreConfidential")
-                Toggle("Skip temporary content other apps mark as transient", isOn: Binding(get: { model.settings.ignoreTransient }, set: { v in model.updateSettings { $0.ignoreTransient = v } }))
-                    .accessibilityIdentifier("settings.ignoreTransient")
-                Text("Clips from the apps below are never saved.").font(.callout)
-                IgnoredAppsEditor(ids: Binding(get: { model.settings.ignoredBundleIDs }, set: { v in model.updateSettings { $0.ignoredBundleIDs = v } }))
-            }
-            Section("Smart features") {
-                Toggle("Open on Picks", isOn: Binding(get: { model.settings.opensOnPicks }, set: { v in model.updateSettings { $0.opensOnPicks = v } }))
-                    .accessibilityIdentifier("settings.picks")
-                Picker("Show Picks", selection: Binding(get: { model.settings.suggestTrigger }, set: { v in model.updateSettings { $0.suggestTrigger = v } })) {
-                    Text("Every time the shelf opens").tag(SuggestTrigger.always)
-                    Text("When you open it from a different app").tag(SuggestTrigger.appChanged)
-                }.disabled(!model.settings.opensOnPicks).accessibilityIdentifier("settings.suggestTrigger")
-                if !SmartClassifier.isAvailable {
-                    Label("The on-device model requires Apple Intelligence. Picks still work from your paste history.", systemImage: "info.circle")
-                        .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("settings.requiresAI")
+                Text(syncAvailable ? "Secrets and clips over 5 MB stay on this Mac." : "Needs a build signed with an iCloud container. This build can't sync.")
+            }.disabled(!syncAvailable).accessibilityIdentifier("settings.sync")
+            Toggle("Play sounds", isOn: setting(\.playSounds)).accessibilityIdentifier("settings.sounds")
+            Toggle("Index clips in Spotlight", isOn: setting(\.spotlightEnabled)).accessibilityIdentifier("settings.spotlight")
+        }
+        Section("Picking a Clip") {
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 12) {
+                    targetRow(.activeApp, "Paste into the front app", "The clip goes straight into the app you were using.")
+                    targetRow(.clipboard, "Copy to the clipboard", "The clip waits on the clipboard; press ⌘V where you want it.")
                 }
-                Toggle("Ask the on-device model about unclear clips", isOn: Binding(get: { model.settings.smartModel }, set: { v in model.updateSettings { $0.smartModel = v } }))
-                    .accessibilityIdentifier("settings.smartModel")
-                Picker("Clips that look like secrets", selection: Binding(get: { model.settings.secretPolicy }, set: { v in model.updateSettings { $0.secretPolicy = v } })) {
-                    Text("Hide").tag(SecretPolicy.mask)
-                    Text("Hide, then delete").tag(SecretPolicy.expire)
-                    Text("Never save").tag(SecretPolicy.skip)
-                }.accessibilityIdentifier("settings.secretPolicy")
-                if model.settings.secretPolicy == .expire {
-                    Stepper("Delete after \(model.settings.secretMinutes) min", value: Binding(get: { model.settings.secretMinutes }, set: { v in model.updateSettings { $0.secretMinutes = v } }), in: 1...120)
+                Spacer(minLength: 0)
+                TargetIllustration(target: model.settings.pasteTarget)
+            }
+            .accessibilityElement(children: .contain).accessibilityIdentifier("settings.pasteTarget")
+            Toggle("Always paste as plain text", isOn: setting(\.alwaysPlain)).accessibilityIdentifier("settings.alwaysPlain")
+            Toggle(isOn: setting(\.linkPreviews)) {
+                Text("Fetch page titles for copied links")
+                Text("Sends a request to the link's site when you copy it. Off by default.")
+            }.accessibilityIdentifier("settings.linkPreviews")
+        }
+        Section("Keep History") {
+            VStack(spacing: 4) {
+                Slider(value: Binding(get: { Double(Retention.allCases.firstIndex(of: model.settings.retention) ?? 0) },
+                                      set: { v in model.updateSettings { $0.retention = Retention.allCases[Int(v.rounded())] } }),
+                       in: 0...Double(Retention.allCases.count - 1), step: 1)
+                    .accessibilityIdentifier("settings.retention")
+                    .accessibilityValue(model.settings.retention.label)
+                HStack {
+                    ForEach(Retention.allCases, id: \.self) { r in
+                        Text(r.rawValue.capitalized).font(.callout).frame(maxWidth: .infinity)
+                    }
+                }.padding(.horizontal, -12).accessibilityHidden(true)
+            }
+            LabeledContent("Keep up to") {
+                HStack {
+                    Slider(value: Binding(get: { Double(model.settings.historyCapacity) },
+                                          set: { v in model.updateSettings { $0.setCapacity(Int(v)) } }),
+                           in: Double(AppSettings.capacityRange.lowerBound)...Double(AppSettings.capacityRange.upperBound), step: 50)
+                        .frame(width: 180).accessibilityIdentifier("settings.capacity")
+                    Text("\(model.settings.historyCapacity) clips").monospacedDigit().frame(width: 76, alignment: .trailing)
                 }
-                Text("Secrets are never suggested, never shown to MCP clients and never indexed. Detection runs on this Mac.\(modelNote)")
-                    .font(.caption).foregroundStyle(.secondary)
             }
-            Section("iCloud") {
-                Toggle("Sync clips with iCloud", isOn: Binding(get: { model.settings.iCloudSync }, set: { v in model.updateSettings { $0.iCloudSync = v } }))
-                    .disabled(!syncAvailable).accessibilityIdentifier("settings.sync")
-                if model.settings.iCloudSync { Text(SyncButton.status(syncing: model.syncing, last: model.lastSynced)).font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("settings.syncStatus") }
-                Text(syncAvailable ? "Secrets and clips over 5 MB stay on this Mac." : "Needs a build signed with an iCloud container from an Apple developer account. This build can't sync.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("MCP server") {
-                Toggle("Let AI tools use my clips", isOn: Binding(get: { model.settings.mcpEnabled }, set: { v in model.updateSettings { $0.mcpEnabled = v } }))
-                    .accessibilityIdentifier("settings.mcp")
-                LabeledContent("Address") { Text("http://127.0.0.1:\(String(model.settings.mcpPort))/mcp").font(.caption.monospaced()).textSelection(.enabled) }
-                if let clients { AIToolsSection(clients: clients, model: model) }
-            }
-            Section("Permissions") {
-                LabeledContent("Accessibility (paste)") {
-                    if accessibilityTrusted { Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(.green) }
-                    else { Button("Allow…", action: onGrant).accessibilityIdentifier("settings.grant") }
-                }
+            HStack {
+                Text("Clips on a pinboard are never removed.").font(.callout).foregroundStyle(.secondary)
+                Spacer()
+                Button("Clear History…") { model.onClear?() }.accessibilityIdentifier("settings.clearHistory")
             }
         }
-        .formStyle(.grouped).frame(width: 460, height: 720).clipperStyle()
+    }
+
+    func targetRow(_ t: PasteTarget, _ title: String, _ detail: String) -> some View {
+        let on = model.settings.pasteTarget == t
+        return Button { model.updateSettings { $0.pasteTarget = t } } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: on ? "circle.inset.filled" : "circle").foregroundStyle(on ? Palette.accent : Color.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                    Text(detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(on ? [.isSelected] : []).accessibilityIdentifier("settings.pasteTarget.\(t.rawValue)")
+    }
+
+    // MARK: Picks
+
+    @ViewBuilder var picks: some View {
+        Section {
+            Toggle("Open on Picks", isOn: setting(\.opensOnPicks)).accessibilityIdentifier("settings.picks")
+            Picker("Show Picks", selection: setting(\.suggestTrigger)) {
+                Text("Every time the shelf opens").tag(SuggestTrigger.always)
+                Text("When you open it from a different app").tag(SuggestTrigger.appChanged)
+            }.disabled(!model.settings.opensOnPicks).accessibilityIdentifier("settings.suggestTrigger")
+        }
+        Section {
+            Toggle(isOn: setting(\.smartModel)) {
+                Text("Ask the on-device model about unclear clips")
+                if !SmartClassifier.isAvailable { Text("Requires Apple Intelligence. Picks still work from your paste history.").accessibilityIdentifier("settings.requiresAI") }
+            }.accessibilityIdentifier("settings.smartModel")
+        }
+    }
+
+    // MARK: Privacy
+
+    @ViewBuilder var privacy: some View {
+        Section {
+            Toggle("Hide Clipper from screen sharing and recordings", isOn: setting(\.hideFromSharing)).accessibilityIdentifier("settings.hideSharing")
+            Toggle("Skip passwords other apps mark as confidential", isOn: setting(\.ignoreConfidential)).accessibilityIdentifier("settings.ignoreConfidential")
+            Toggle("Skip temporary content other apps mark as transient", isOn: setting(\.ignoreTransient)).accessibilityIdentifier("settings.ignoreTransient")
+        }
+        Section {
+            Picker("Clips that look like secrets", selection: setting(\.secretPolicy)) {
+                Text("Hide").tag(SecretPolicy.mask)
+                Text("Hide, then delete").tag(SecretPolicy.expire)
+                Text("Never save").tag(SecretPolicy.skip)
+            }.accessibilityIdentifier("settings.secretPolicy")
+            if model.settings.secretPolicy == .expire {
+                Stepper("Delete after \(model.settings.secretMinutes) min", value: setting(\.secretMinutes), in: 1...120)
+            }
+        } header: { Text("Secrets") } footer: {
+            Text("Secrets are never suggested, never shown to AI tools and never indexed. Detection runs on this Mac.\(modelNote)")
+                .font(.callout).foregroundStyle(.secondary)
+        }
+        Section("Ignored Apps") {
+            Text("Clips from these apps are never saved.").font(.callout).foregroundStyle(.secondary)
+            IgnoredAppsEditor(ids: setting(\.ignoredBundleIDs))
+        }
+        Section("Permissions") {
+            LabeledContent {
+                if accessibilityTrusted { Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(.green) }
+                else { Button("Allow…", action: onGrant).accessibilityIdentifier("settings.grant") }
+            } label: {
+                Text("Accessibility")
+                Text("Needed to paste into other apps.")
+            }
+        }
+    }
+
+    // MARK: Shortcuts
+
+    @ViewBuilder var shortcuts: some View {
+        Section {
+            LabeledContent("Open the shelf") {
+                HotkeyRecorder(current: model.settings.hotkey) { hk in model.updateSettings { $0.hotkey = hk } }.id(model.settings.hotkey)
+            }
+            LabeledContent("Paste next in Paste Stack") {
+                HotkeyRecorder(current: model.settings.stackHotkey) { hk in model.updateSettings { $0.stackHotkey = hk } }.id(model.settings.stackHotkey)
+            }
+            Picker(selection: setting(\.quickModifier)) {
+                ForEach(QuickModifier.allCases, id: \.self) { Text("\($0.symbol) + 1…9").tag($0) }
+            } label: {
+                Text("Quick paste")
+                Text("Hold it and press 1 to 9 while the shelf is open.")
+            }.accessibilityIdentifier("settings.quickModifier")
+        }
+        Section {
+            HStack { Spacer(); Button("Reset Shortcuts to Default") { model.updateSettings { $0.resetShortcuts() } }.accessibilityIdentifier("settings.resetShortcuts") }
+        }
+    }
+
+    // MARK: AI Tools
+
+    @ViewBuilder var aiTools: some View {
+        Section {
+            Toggle(isOn: setting(\.mcpEnabled)) {
+                Text("Let AI tools use my clips")
+                Text("Connected tools can search and read clips on this Mac. Secrets are never shared.")
+            }.accessibilityIdentifier("settings.mcp")
+            LabeledContent("Address") { Text("http://127.0.0.1:\(String(model.settings.mcpPort))/mcp").font(.callout.monospaced()).textSelection(.enabled) }
+        }
+        if let clients { Section("Connected") { AIToolsSection(clients: clients, model: model) } }
     }
 }
 
+/// A small drawing beside the "Picking a clip" choice: a card dropping into a window, or onto the clipboard.
+struct TargetIllustration: View {
+    let target: PasteTarget
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(LinearGradient(colors: [Color(red: 0.36, green: 0.58, blue: 1), Color(red: 0.17, green: 0.38, blue: 0.92)], startPoint: .top, endPoint: .bottom))
+            Image(systemName: target == .activeApp ? "macwindow.badge.plus" : "doc.on.clipboard")
+                .font(.system(size: 40, weight: .regular)).foregroundStyle(.white)
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .frame(width: 150, height: 100)
+        .accessibilityHidden(true)
+    }
+}
 
 /// Bundle ids of apps whose clipboard is never saved. Add the frontmost running app or type an id.
 struct IgnoredAppsEditor: View {
@@ -226,7 +353,7 @@ struct IgnoredAppsEditor: View {
                 }
             }
             HStack {
-                TextField("com.example.app", text: $newID).textFieldStyle(.roundedBorder).accessibilityIdentifier("settings.ignoreField")
+                TextField("Bundle ID", text: $newID, prompt: Text("com.example.app")).labelsHidden().textFieldStyle(.roundedBorder).accessibilityIdentifier("settings.ignoreField")
                 Button("Add") {
                     let t = newID.trimmingCharacters(in: .whitespaces)
                     if !t.isEmpty, !ids.contains(t) { ids.append(t) }; newID = ""

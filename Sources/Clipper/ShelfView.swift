@@ -15,6 +15,7 @@ final class ShelfModel: ObservableObject {
     @Published var apps: [String] = []
     @Published var selection = 0
     @Published var focusTick = 0           // bumped each time the shelf opens so search regains focus
+    @Published var searchTick = 0          // bumped by ⌘F, which also opens the collapsed search field
     @Published var items: [ClipItem] = []
     @Published var boards: [String] = []
     @Published var stack = PasteStack()
@@ -145,6 +146,8 @@ struct ShelfView: View {
     @State private var dropBoard: String?
     @FocusState private var boardFieldFocused: Bool
     @FocusState private var searchFocused: Bool
+    @State private var searchHover = false
+    @State private var searchPinned = false
 
     static let cardSize = CGSize(width: 234, height: 234)
     static let height: CGFloat = 332
@@ -197,6 +200,7 @@ struct ShelfView: View {
         .onKeyPress(phases: .down) { press in handleKey(press) }
         .onAppear { searchFocused = true }
         .onChange(of: model.focusTick) { searchFocused = true }
+        .onChange(of: model.searchTick) { searchPinned = true }
         .onChange(of: model.query) { model.refresh() }
         .onChange(of: model.kind) { model.refresh() }
         .onChange(of: model.board) { model.refresh() }
@@ -300,50 +304,59 @@ struct ShelfView: View {
         .padding(.horizontal, 18).frame(height: 36)
     }
 
+    /// A magnifier that widens into a field on hover or click, and stays open while it holds text. The field keeps
+    /// keyboard focus while collapsed, so typing on an open shelf still searches (and opens it).
     var searchField: some View {
-        let open = searchFocused || !model.query.isEmpty
+        let open = searchHover || searchPinned || !model.query.isEmpty
         return HStack(spacing: 5) {
-            Image(systemName: "magnifyingglass").foregroundStyle(Palette.glassLabel2)
+            Image(systemName: "magnifyingglass").foregroundStyle(open ? Palette.glassLabel2 : Palette.glassLabel)
             TextField("Search", text: $model.query)
                 .textFieldStyle(.plain).focused($searchFocused)
                 .onSubmit { model.pickSelected(plain: false) }
                 .accessibilityIdentifier("shelf.search")
+                .frame(width: open ? nil : 0).opacity(open ? 1 : 0)
         }
-        .padding(.horizontal, 10).padding(.vertical, 6)
-        .frame(width: open ? 200 : 110)
+        .padding(.horizontal, open ? 10 : 6)
+        .frame(width: open ? 200 : 28, height: 28)
         .background(open ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: Capsule())
-        .animation(.easeOut(duration: 0.15), value: open)
+        .contentShape(Capsule())
+        .onHover { searchHover = $0; if !$0 && model.query.isEmpty { searchPinned = false } }
+        .onTapGesture { searchPinned = true; searchFocused = true }
+        .onChange(of: model.query) { if model.query.isEmpty && !searchHover { searchPinned = false } }
+        .help("Search clips")
+        .animation(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .easeOut(duration: 0.18), value: open)
     }
 
     var moreMenu: some View {
         Menu {
-            Button("About Clipper") { model.onCommand?(.about) }
+            Button { model.onCommand?(.about) } label: { Label("About Clipper", systemImage: "info.circle") }
             Divider()
-            Button("New Clip…") { model.onCommand?(.newClip) }.keyboardShortcut("n")
-            Button("Settings…") { model.onCommand?(.settings) }.keyboardShortcut(",")
-            Button("Select All") { model.selectAll() }
-            if !model.marked.isEmpty { Button("Deselect All") { model.deselectAll() } }
-            Button("Import from iPhone…") { model.onCommand?(.importFromDevice) }
-            Menu("Help") {
+            Button { model.onCommand?(.newClip) } label: { Label("New Clip…", systemImage: "square.and.pencil") }.keyboardShortcut("n")
+            Button { model.onCommand?(.settings) } label: { Label("Settings…", systemImage: "gearshape") }.keyboardShortcut(",")
+            Divider()
+            Button { model.selectAll() } label: { Label("Select All", systemImage: "checkmark.circle") }
+            if !model.marked.isEmpty { Button { model.deselectAll() } label: { Label("Deselect All", systemImage: "circle") } }
+            Button { model.onCommand?(.importFromDevice) } label: { Label("Import from iPhone…", systemImage: "iphone") }
+            Menu {
                 Button("Getting Started") { model.onCommand?(.gettingStarted) }
                 Button("Keyboard Shortcuts") { model.onCommand?(.shortcuts) }
                 Divider()
                 if model.diagnosing { Button("Stop and Copy Logs") { model.onCommand?(.stopDiagnostics) } }
                 else { Button("Start Diagnostics") { model.onCommand?(.startDiagnostics) } }
-            }
+            } label: { Label("Help", systemImage: "questionmark.circle") }
             Divider()
             if let p = model.pausedUntil {
-                Button("Resume Capture (\(p))") { model.onCommand?(.resume) }
+                Button { model.onCommand?(.resume) } label: { Label("Resume Capture (\(p))", systemImage: "play.circle") }
             } else {
-                Menu("Pause Capture") {
+                Menu {
                     Button("Until I Resume") { model.onCommand?(.pause(nil)) }
                     Divider()
                     ForEach(CapturePause.durations, id: \.1) { d in Button("For \(d.0)") { model.onCommand?(.pause(d.1)) } }
-                }
+                } label: { Label("Pause Capture", systemImage: "pause.circle") }
             }
-            Button("Clear History…") { model.onCommand?(.clear) }
+            Button { model.onCommand?(.clear) } label: { Label("Clear History…", systemImage: "trash") }
             Divider()
-            Button("Quit Clipper") { model.onCommand?(.quit) }.keyboardShortcut("q")
+            Button { model.onCommand?(.quit) } label: { Label("Quit Clipper", systemImage: "xmark.square") }.keyboardShortcut("q")
         } label: { Image(systemName: "ellipsis").frame(width: 28, height: 28) }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         .accessibilityLabel("More").accessibilityIdentifier("shelf.more")
