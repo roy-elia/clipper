@@ -3,23 +3,21 @@ import AVFoundation
 import SwiftUI
 import DropCore
 
-/// Short sounds synthesized here (a soft two-note chime each), so no audio file is bundled or copied from anywhere.
+/// Short sounds synthesized here ("Glass": one bright bell each), so no audio file is bundled or copied from anywhere.
 @MainActor
 final class SoundFeedback {
     enum Cue { case copy, paste }
     private var players: [Cue: AVAudioPlayer] = [:]
     var enabled = false
 
-    /// Each note is a sine with a quiet octave overtone (a soft bell), long enough to hear over other audio.
-    static func wav(freqs: [Double], noteSeconds: Double = 0.11, rate: Double = 44_100) -> Data {
+    /// A single bell: the fundamental plus its 2nd and 3rd harmonics, with a fast attack and a slow exponential fade.
+    static func wav(freq: Double, seconds: Double = 0.35, rate: Double = 44_100) -> Data {
         var samples: [Int16] = []
-        for f in freqs {
-            let n = Int(noteSeconds * rate)
-            for i in 0..<n {
-                let t = Double(i) / rate, env = min(1, Double(i) / 200) * pow(1 - Double(i) / Double(n), 1.2)
-                let tone = sin(2 * .pi * f * t) * 0.8 + sin(4 * .pi * f * t) * 0.2
-                samples.append(Int16(max(-1, min(1, tone * env * 0.7)) * Double(Int16.max)))
-            }
+        let n = Int(seconds * rate)
+        for i in 0..<n {
+            let t = Double(i) / rate, env = min(1, Double(i) / 30) * exp(-6 * Double(i) / Double(n))
+            let tone = sin(2 * .pi * freq * t) + 0.4 * sin(4 * .pi * freq * t) + 0.15 * sin(6 * .pi * freq * t)
+            samples.append(Int16(max(-1, min(1, tone / 1.55 * env * 0.8)) * Double(Int16.max)))
         }
         var d = Data()
         func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
@@ -33,7 +31,8 @@ final class SoundFeedback {
 
     private func player(_ cue: Cue) -> AVAudioPlayer? {
         if let p = players[cue] { return p }
-        let data = Self.wav(freqs: cue == .copy ? [660, 880] : [880, 660])
+        // Copy rings at G6; paste a fourth lower (D6) so the two are told apart.
+        let data = Self.wav(freq: cue == .copy ? 1568 : 1175)
         guard let p = try? AVAudioPlayer(data: data) else { return nil }
         p.volume = 1; p.prepareToPlay(); players[cue] = p
         return p

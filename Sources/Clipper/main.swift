@@ -1021,7 +1021,7 @@ final class ShelfPanel: NSPanel {
         }
     }
     // sounds: the synthesized WAV is valid and plays when enabled
-    let wav = SoundFeedback.wav(freqs: [660, 880])
+    let wav = SoundFeedback.wav(freq: 1568)
     check("sound is a well-formed WAV", wav.prefix(4) == Data("RIFF".utf8) && wav.count > 44 && (try? AVAudioPlayer(data: wav)) != nil)
     let snd = SoundFeedback(); check("sounds silent when disabled", !snd.play(.copy)); snd.enabled = true
     check("sounds play when enabled", snd.play(.paste))
