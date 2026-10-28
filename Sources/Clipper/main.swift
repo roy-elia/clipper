@@ -31,6 +31,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var wheelMonitor: Any?
     let hotkeys = HotkeyCenter()
     let stackHotkeys = HotkeyCenter(id: 2)
+    let screenshotHotkeys = HotkeyCenter(id: 3)
     let sounds = SoundFeedback()
     let osd = OSD()
     var collecting = false
@@ -62,6 +63,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(withTitle: "New Clip…", action: #selector(showNewClip), keyEquivalent: "n").target = self
         menu.addItem(withTitle: "Paste Stack…", action: #selector(showStack), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
+        menu.addItem(withTitle: "Clear Screenshots", action: #selector(clearScreenshots), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Clear History…", action: #selector(confirmClear), keyEquivalent: "").target = self
         collectItem = menu.addItem(withTitle: "Collect Copies to Stack", action: #selector(toggleCollect(_:)), keyEquivalent: "")
         collectItem?.target = self
@@ -106,6 +108,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             monitor.rules = makeRules()
             sounds.enabled = model.settings.playSounds
             if stackHotkeys.registered != model.settings.stackHotkey { stackHotkeys.register(model.settings.stackHotkey) }
+            if screenshotHotkeys.registered != model.settings.screenshotsHotkey { screenshotHotkeys.register(model.settings.screenshotsHotkey) }
             applyPrivacy()
             applySpotlight()
             if model.settings.iCloudSync { syncNow() }
@@ -139,6 +142,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         sounds.enabled = model.settings.playSounds
         stackHotkeys.onFire = { [weak self] in self?.pasteNext() }
         stackHotkeys.register(model.settings.stackHotkey)
+        screenshotHotkeys.onFire = { [weak self] in self?.clearScreenshots() }
+        PasteInjector.diag("hotkey clear-screenshots \(model.settings.screenshotsHotkey.display) registered=\(screenshotHotkeys.register(model.settings.screenshotsHotkey))")
         model.onShare = { [weak self] item in self?.share(item) }
         model.onCopy = { [weak self] item in self?.copyOnly(item) }
         model.onEdit = { [weak self] item in self?.openEditor(item) }
@@ -425,6 +430,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .pause(let d): setPause(d)
         case .resume: resume()
         case .clear: confirmClear()
+        case .clearScreenshots: clearScreenshots()
         case .quit: NSApp.terminate(nil)
         case .importFromDevice: hideShelfForOwnWindow(); showImport()
         case .startDiagnostics:
@@ -496,6 +502,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if mods == .command, e.charactersIgnoringModifiers == "z", model.query.isEmpty, model.lastDeleted != nil {
                 model.undoDelete(); osd.show("Restored", symbol: "arrow.uturn.backward", hideFromSharing: model.settings.hideFromSharing); return nil
             }
+            if mods == [.command, .option], e.keyCode == 51 || e.keyCode == 117 { clearScreenshots(); return nil }
             if mods == .command, e.keyCode == 123 { model.cycleBoard(-1); return nil }
             if mods == .command, e.keyCode == 124 { model.cycleBoard(1); return nil }
             guard mods == .command else { return e }
@@ -752,6 +759,13 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             panel?.orderOut(nil)
             m.popUp(positioning: nil, at: NSPoint(x: 0, y: b.bounds.height + 4), in: b)
         } else { toggle() }
+    }
+
+    /// No confirmation: it only touches unpinned screenshots, and ⌘Z in the shelf brings them back.
+    @objc func clearScreenshots() {
+        let n = model.clearScreenshots()
+        osd.show(n == 0 ? "No screenshots to clear" : "Cleared \(n) screenshot\(n == 1 ? "" : "s"). ⌘Z in Clipper to undo",
+                 symbol: n == 0 ? "camera.viewfinder" : "trash", hideFromSharing: model.settings.hideFromSharing)
     }
 
     /// Always asks first: deleting history cannot be undone.

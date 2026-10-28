@@ -295,6 +295,9 @@ struct SettingsView: View {
             LabeledContent("Paste next in Paste Stack") {
                 HotkeyRecorder(current: model.settings.stackHotkey) { hk in model.updateSettings { $0.stackHotkey = hk } }.id(model.settings.stackHotkey)
             }
+            LabeledContent("Clear screenshots") {
+                HotkeyRecorder(current: model.settings.screenshotsHotkey) { hk in model.updateSettings { $0.screenshotsHotkey = hk } }.id(model.settings.screenshotsHotkey)
+            }
             Picker(selection: setting(\.quickModifier)) {
                 ForEach(QuickModifier.allCases, id: \.self) { Text("\($0.symbol) + 1…9").tag($0) }
             } label: {

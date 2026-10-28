@@ -166,6 +166,20 @@ public final class HistoryStore: @unchecked Sendable {
         }
     }
 
+    /// Deletes unpinned screenshots (see `ClipItem.isScreenshot`) and returns them, so the caller can offer undo.
+    @discardableResult
+    public func deleteScreenshots() -> [ClipItem] {
+        lock.withLock {
+            let doomed = items.filter { $0.isScreenshot && $0.pinboard == nil }
+            guard !doomed.isEmpty else { return [] }
+            let now = Date(), ids = Set(doomed.map(\.id))
+            for i in doomed { tombstones[i.id] = now }
+            items.removeAll { ids.contains($0.id) }
+            persist()
+            return doomed
+        }
+    }
+
     public func markSecret(_ id: UUID, _ on: Bool = true, byModel: Bool = false) {
         lock.withLock { if let i = items.firstIndex(where: { $0.id == id }) { items[i].sensitive = on ? true : nil; items[i].modelFlagged = on && byModel ? true : nil; items[i].modifiedAt = Date(); persist() } }
     }

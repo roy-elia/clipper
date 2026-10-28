@@ -75,6 +75,15 @@ final class ShelfModel: ObservableObject {
         lastDeleted = t.first; marked = []; refresh(); onDeleted?(t.count)
     }
     var lastDeletedBatch: [ClipItem] = []
+    /// Removes every unpinned screenshot; ⌘Z puts them back, like any delete. Returns how many went.
+    @discardableResult func clearScreenshots() -> Int {
+        let gone = store.deleteScreenshots()
+        guard !gone.isEmpty else { return 0 }
+        let ids = Set(gone.map(\.id))
+        for i in gone { stack.remove(i.id) }
+        lastDeletedBatch = gone; lastDeleted = gone.first; marked.removeAll { ids.contains($0) }; refresh()
+        return gone.count
+    }
 
     init(store: HistoryStore, settings: AppSettings = AppSettings()) {
         self.store = store; self.settings = settings; refresh()
@@ -135,7 +144,7 @@ final class ShelfModel: ObservableObject {
 }
 
 /// Commands from the shelf's ⋯ menu, handled by the app.
-enum ShelfCommand { case about, newClip, settings, gettingStarted, shortcuts, pause(TimeInterval?), resume, clear, quit, importFromDevice, startDiagnostics, stopDiagnostics }
+enum ShelfCommand { case about, newClip, settings, gettingStarted, shortcuts, pause(TimeInterval?), resume, clear, clearScreenshots, quit, importFromDevice, startDiagnostics, stopDiagnostics }
 
 struct ShelfView: View {
     @ObservedObject var model: ShelfModel
@@ -379,6 +388,8 @@ struct ShelfView: View {
                     ForEach(CapturePause.durations, id: \.1) { d in Button("For \(d.0)") { model.onCommand?(.pause(d.1)) } }
                 } label: { Label("Pause Capture", systemImage: "pause.circle") }
             }
+            Button { model.onCommand?(.clearScreenshots) } label: { Label("Clear Screenshots", systemImage: "camera.viewfinder") }
+                .keyboardShortcut(.delete, modifiers: [.command, .option])
             Button { model.onCommand?(.clear) } label: { Label("Clear History…", systemImage: "trash") }
             Divider()
             Button { model.onCommand?(.quit) } label: { Label("Quit Clipper", systemImage: "xmark.square") }.keyboardShortcut("q")

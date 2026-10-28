@@ -52,3 +52,26 @@ public extension ClipItem {
     }
     var fileNames: [String] { (fileURLs ?? []).map { URL(string: $0)?.lastPathComponent ?? $0 } }
 }
+
+extension ClipItem {
+    /// Apps whose copied images are screenshots. Matched by prefix, so versioned IDs such as Snagit's count too.
+    public static let screenshotApps = ["com.apple.screencaptureui", "com.apple.screenshot", "cc.ffitch.shottr",
+                                        "pl.maketheweb.cleanshotx", "com.TechSmith.Snagit", "com.xnipapp.xnip",
+                                        "com.skillbrains.lightshot", "com.monosnap.monosnap"]
+    private static let screenshotNames = try! NSRegularExpression(pattern: #"^(Screenshot|Screen Shot|CleanShot|Shottr|SCR-)[ _-]?.*\.(png|jpe?g|heic|tiff?|gif|webp)$"#, options: [.caseInsensitive])
+
+    /// An image copied from a screenshot tool, or a copied file named like a screenshot (macOS, CleanShot, Shottr).
+    public var isScreenshot: Bool {
+        switch kind {
+        case .image:
+            guard let b = sourceBundleID else { return false }
+            return Self.screenshotApps.contains { b.hasPrefix($0) }
+        case .file:
+            return (fileURLs ?? []).contains { u in
+                let name = (URL(string: u)?.lastPathComponent).flatMap { $0.isEmpty ? nil : $0 } ?? (u as NSString).lastPathComponent
+                return Self.screenshotNames.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil
+            }
+        default: return false
+        }
+    }
+}

@@ -54,6 +54,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var smartModel: Bool = true
     public var hideFromSharing: Bool = true
     public var stackHotkey: Hotkey = Hotkey(keyCode: 8, modifiers: Hotkey.cmd | Hotkey.shift)
+    /// Clears screenshots from anywhere: ⌃⌥⌘⌫ (Delete is key code 51).
+    public var screenshotsHotkey: Hotkey = Hotkey(keyCode: 51, modifiers: Hotkey.control | Hotkey.option | Hotkey.cmd)
     public var onboarded: Bool = false
     public var lastSeenVersion: String?
     public var iCloudSync: Bool = false
@@ -74,7 +76,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     /// Shelf ⇧⌘V and Paste Stack ⇧⌘C.
     public mutating func resetShortcuts() {
-        let d = AppSettings(); hotkey = d.hotkey; stackHotkey = d.stackHotkey; quickModifier = d.quickModifier
+        let d = AppSettings(); hotkey = d.hotkey; stackHotkey = d.stackHotkey; screenshotsHotkey = d.screenshotsHotkey; quickModifier = d.quickModifier
     }
 
     // Older settings files lack newer keys; fall back to defaults instead of discarding everything.
@@ -94,6 +96,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         smartModel = try c.decodeIfPresent(Bool.self, forKey: .smartModel) ?? def.smartModel
         hideFromSharing = try c.decodeIfPresent(Bool.self, forKey: .hideFromSharing) ?? def.hideFromSharing
         stackHotkey = try c.decodeIfPresent(Hotkey.self, forKey: .stackHotkey) ?? def.stackHotkey
+        screenshotsHotkey = try c.decodeIfPresent(Hotkey.self, forKey: .screenshotsHotkey) ?? def.screenshotsHotkey
         onboarded = try c.decodeIfPresent(Bool.self, forKey: .onboarded) ?? def.onboarded
         lastSeenVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenVersion)
         iCloudSync = try c.decodeIfPresent(Bool.self, forKey: .iCloudSync) ?? def.iCloudSync

@@ -236,6 +236,7 @@ struct ShortcutsView: View {
     var rows: [(String, String)] {
         let q = settings.quickModifier.symbol
         return [("Open the shelf", settings.hotkey.display), ("Paste from the Paste Stack", settings.stackHotkey.display),
+                ("Clear screenshots", "\(settings.screenshotsHotkey.display), or ⌥⌘⌫ in the shelf"),
                 ("Paste the selected clip", "↩"), ("Paste as plain text", "⇧↩ or ⇧-click"), ("Paste clip 1…9", "\(q)1…\(q)9"),
                 ("Move between clips", "← →"), ("Next / previous pinboard", "⌘→ / ⌘←"), ("Preview", "Space"),
                 ("Copy without pasting", "⌘C"), ("Edit", "⌘E"), ("Rename", "⌘R"), ("Delete", "⌫ (⌘Z to undo)"), ("Close", "Esc")]
