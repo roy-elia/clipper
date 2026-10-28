@@ -9,7 +9,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/Clipper "$APP/Contents/MacOS/Clipper"
 cp .build/release/clipper-mcp-stdio "$APP/Contents/MacOS/clipper-mcp-stdio"
 cp Resources/Clipper.sdef "$APP/Contents/Resources/Clipper.sdef"
-# The app icon is drawn in code (ClipperMark) so it always matches the menu bar glyph.
+# The app icon is drawn in code (ClipperMark.appIcon).
 ICONSET=$(mktemp -d)/Clipper.iconset
 .build/release/Clipper --make-icon "$ICONSET"
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/Clipper.icns"

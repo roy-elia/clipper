@@ -1,7 +1,7 @@
 import AppKit
 
-/// Clipper's mark, "Shelf Clip": a paperclip lying on its side whose longest run keeps going and becomes the shelf.
-/// Shared by the menu bar glyph and the app icon so the two always match.
+/// Clipper's marks. The menu bar glyph is "Shelf Clip", a paperclip lying on its side whose longest run keeps going and
+/// becomes the shelf. The app icon is "Fan", three upright clips fanned out.
 enum ClipperMark {
     /// The wire's centre line in y-down units: four runs `s` apart from `y1`, concentric left turns centred at `xc`,
     /// the right turn centred at `xr`, and the bottom run carried on to `tail`. `map` converts to AppKit points.
@@ -53,35 +53,71 @@ enum ClipperMark {
         return img
     }
 
-    /// The app icon at `pixels` square, on the macOS icon grid (824-pixel body in 1024). Three layers, no baked effects:
-    /// a blue ground with a translucent shelf, the inner loop at half opacity (set back), and the outer loop whose long
-    /// run is the shelf's top edge and runs off the right edge.
+    /// An upright clip's centre line in y-down canvas units: legs `s` apart centred on `cx`, top turns centred at `yt`,
+    /// bottom turn at `yb`.
+    static func uprightClip(cx: Double, yt: Double, yb: Double, s: Double, innerEnd: Double, outerEnd: Double) -> CGPath {
+        let (x1, x2, x3, x4) = (cx - 1.5 * s, cx - 0.5 * s, cx + 0.5 * s, cx + 1.5 * s)
+        let p = CGMutablePath()
+        p.move(to: CGPoint(x: x2, y: innerEnd))
+        p.addLine(to: CGPoint(x: x2, y: yt))
+        p.addArc(center: CGPoint(x: cx, y: yt), radius: s / 2, startAngle: .pi, endAngle: 0, clockwise: false)    // inner turn
+        p.addLine(to: CGPoint(x: x3, y: yb))
+        p.addArc(center: CGPoint(x: x2, y: yb), radius: s, startAngle: 0, endAngle: .pi, clockwise: false)       // bottom turn
+        p.addLine(to: CGPoint(x: x1, y: yt))
+        p.addArc(center: CGPoint(x: cx, y: yt), radius: 1.5 * s, startAngle: .pi, endAngle: 0, clockwise: false) // outer turn
+        p.addLine(to: CGPoint(x: x4, y: outerEnd))
+        return p
+    }
+
+    static func srgb(_ hex: UInt32, _ a: Double = 1) -> CGColor {
+        CGColor(srgbRed: Double(hex >> 16 & 255) / 255, green: Double(hex >> 8 & 255) / 255, blue: Double(hex & 255) / 255, alpha: a)
+    }
+
+    /// The app icon at `pixels` square, on the macOS icon grid (824-pixel body in 1024): "Fan", three clips fanned out
+    /// in the brand blues on a white ground, one per copy in the history. Each clip is a solid object (its outline filled
+    /// with a vertical gradient, a bright rim and a soft shadow) because the flat .icns gets no Liquid Glass of its own.
+    /// At 32 and 16 px it drops to two shorter clips, the front one upright with its legs on whole pixels.
     /// Resources/IconLayers holds the same layers as full-bleed SVGs for Icon Composer.
     static func appIcon(pixels: Int) -> NSBitmapImageRep {
         let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels, bitsPerSample: 8, samplesPerPixel: 4,
                                    hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-        let s = CGFloat(pixels) / 1024
-        // Canvas pixels, y down, to AppKit.
-        func px(_ x: Double, _ y: Double) -> NSPoint { NSPoint(x: x * s, y: (1024 - y) * s) }
-        let body = NSRect(x: 100 * s, y: 100 * s, width: 824 * s, height: 824 * s)
-        NSBezierPath(roundedRect: body, xRadius: 185 * s, yRadius: 185 * s).addClip()
-        NSGradient(starting: NSColor(srgbRed: 0x3F / 255, green: 0x7C / 255, blue: 0xFF / 255, alpha: 1),
-                   ending: NSColor(srgbRed: 0x1C / 255, green: 0x47 / 255, blue: 0xCC / 255, alpha: 1))?
-            .draw(in: NSRect(x: 0, y: 0, width: 1024 * s, height: 1024 * s), angle: -90)
-        // Canvas px: run spacing, wire width, left-turn centre, right-turn centre, top run. At 16 and 32 px the clip
-        // is larger with a thicker wire so its four runs stay apart; at 16 px each run is one pixel row.
-        let (sp, w, xc, xr, y1): (Double, Double, Double, Double, Double) =
-            pixels <= 16 ? (128, 64, 350, 760, 288) : pixels <= 32 ? (112, 64, 370, 730, 302) : (96, 54, 360, 690, 326)
-        let shelfTop = y1 + 3 * sp
-        NSColor(white: 1, alpha: 0.16).setFill()
-        NSRect(x: 0, y: 0, width: 1024 * s, height: (1024 - shelfTop) * s).fill()
-        let (inner, outer) = wireParts(s: sp, y1: y1, xc: xc, xr: xr, tail: 1100, map: px)
-        inner.lineWidth = w * s; outer.lineWidth = w * s
-        NSColor(white: 1, alpha: pixels <= 32 ? 0.7 : 0.5).setStroke(); inner.stroke()
-        NSColor.white.setStroke(); outer.stroke()
-        NSGraphicsContext.restoreGraphicsState()
+        let gc = NSGraphicsContext(bitmapImageRep: rep)!, ctx = gc.cgContext
+        let k = Double(pixels) / 1024
+        ctx.translateBy(x: 0, y: Double(pixels)); ctx.scaleBy(x: k, y: -k)   // y down on the 1024 grid
+        func gradient(_ a: CGColor, _ b: CGColor, from y0: Double, to y1: Double) {
+            let g = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: [a, b] as CFArray, locations: [0, 1])!
+            ctx.drawLinearGradient(g, start: CGPoint(x: 512, y: y0), end: CGPoint(x: 512, y: y1),
+                                   options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+        }
+        ctx.addPath(CGPath(roundedRect: CGRect(x: 100, y: 100, width: 824, height: 824), cornerWidth: 185, cornerHeight: 185, transform: nil))
+        ctx.clip()
+        gradient(srgb(0xFFFFFF), srgb(0xE9EEF8), from: 100, to: 924)
+
+        let small = pixels <= 32
+        // Rotation, spacing, wire width, leg length (top turn to bottom turn), centre x, how far below the clip it pivots.
+        let (angles, sp, w, len, cx, drop): ([Double], Double, Double, Double, Double, Double) =
+            pixels <= 16 ? ([-0.38, 0], 128, 64, 280, 544, 40)
+            : small ? ([-0.34, 0], 96, 64, 250, 528, 40)
+            : ([-0.34, 0, 0.34], 72, 50, 259, 512, 80)
+        let blues: [(UInt32, UInt32)] = [(0x9DBBFF, 0x7EA4FF), (0x4F86FF, 0x2F6BFF), (0x2457E6, 0x1C3FB8)]
+        let colors = small ? [blues[0], blues[2]] : blues
+        let bottom = 512 + (2.5 * sp + len) / 2 - 12   // the clip's lowest point, so the fan sits just above centre
+        let yt = bottom - sp - len, yb = yt + len
+        for (angle, (top, base)) in zip(angles, colors) {
+            ctx.saveGState()
+            ctx.translateBy(x: cx, y: bottom + drop); ctx.rotate(by: angle); ctx.translateBy(x: -cx, y: -(bottom + drop))
+            let shape = uprightClip(cx: cx, yt: yt, yb: yb, s: sp, innerEnd: yb - 0.55 * sp, outerEnd: yb - 1.1 * sp)
+                .copy(strokingWithWidth: w, lineCap: .round, lineJoin: .round, miterLimit: 10)
+            ctx.saveGState()   // shadow offsets aren't scaled by the CTM, and y is up in device space
+            ctx.setShadow(offset: CGSize(width: 0, height: -14 * k), blur: 28 * k, color: srgb(0x0A1A4A, small ? 0.1 : 0.22))
+            ctx.addPath(shape); ctx.setFillColor(srgb(base)); ctx.fillPath()
+            ctx.restoreGState()
+            ctx.addPath(shape); ctx.clip()
+            gradient(srgb(top), srgb(base), from: 200, to: 760)
+            ctx.addPath(shape); ctx.setStrokeColor(CGColor(gray: 1, alpha: 0.35)); ctx.setLineWidth(5); ctx.strokePath()   // rim
+            ctx.restoreGState()
+        }
+        gc.flushGraphics()
         return rep
     }
 
