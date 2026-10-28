@@ -84,6 +84,10 @@ func runSnapshots(into dir: String) -> Int32 {
         _ = render(ShelfView(model: m).frame(width: 1400), appearance: ap, large: large, to: out("Shelf-Picks")); count += 1
         m.picks = false; m.board = "Work"; m.refresh()
         _ = render(ShelfView(model: m).frame(width: 1400), appearance: ap, large: large, to: out("Shelf-Work")); count += 1
+        // Filter badge, drop-target tab and naming field: the fills that replaced outlines on glass.
+        m.board = nil; m.kind = .text; m.refresh()
+        _ = render(ShelfView(model: m, dropBoard: "Ideas", adding: true).frame(width: 1400), appearance: ap, large: large, to: out("Shelf-States")); count += 1
+        m.kind = nil
         m.board = "Ideas"; m.refresh()
         _ = render(ShelfView(model: m).frame(width: 1400), appearance: ap, large: large, to: out("Shelf-Empty")); count += 1
         _ = render(PreviewView(item: item), appearance: ap, large: large, to: out("Preview")); count += 1

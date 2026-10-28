@@ -149,6 +149,11 @@ struct ShelfView: View {
     @State private var searchHover = false
     @State private var searchPinned = false
 
+    /// The drop target and naming field can be preset so snapshots show those states.
+    init(model: ShelfModel, dropBoard: String? = nil, adding: Bool = false) {
+        self.model = model; _dropBoard = State(initialValue: dropBoard); _adding = State(initialValue: adding)
+    }
+
     static let cardSize = CGSize(width: 234, height: 234)
     static let height: CGFloat = 332
 
@@ -268,9 +273,9 @@ struct ShelfView: View {
                 iconButton("line.3.horizontal.decrease", label: "Filter", selected: filterCount > 0) { filtering.toggle() }
                     .overlay(alignment: .topTrailing) {
                         if filterCount > 0 {
-                            Text("\(filterCount)").font(.system(size: 9, weight: .bold)).foregroundStyle(Palette.onAccent)
-                                .frame(minWidth: 14, minHeight: 14).background(Palette.accentFill, in: Capsule())
-                                .overlay(Capsule().strokeBorder(Palette.keyline, lineWidth: 1)).offset(x: 3, y: -3)
+                            // Ink, not accent: it stands apart from the selected (accent) button without a keyline drawn on glass.
+                            Text("\(filterCount)").font(.system(size: 9, weight: .bold)).foregroundStyle(Palette.inkOn)
+                                .frame(minWidth: 14, minHeight: 14).background(Palette.ink, in: Capsule()).offset(x: 3, y: -3)
                                 .allowsHitTesting(false).accessibilityHidden(true)
                         }
                     }
@@ -278,8 +283,7 @@ struct ShelfView: View {
                     .popover(isPresented: $filtering, arrowEdge: .top) { FilterPopover(model: model) }
                 tab("Clipboard", nil, symbol: "clock.arrow.circlepath")
                 ForEach(model.boards, id: \.self) { b in
-                    tab(b, b, dot: model.boardColor(b))
-                        .overlay { if dropBoard == b { Capsule().strokeBorder(Palette.accentFill, lineWidth: 3).padding(-3).allowsHitTesting(false) } }
+                    tab(b, b, dot: model.boardColor(b), targeted: dropBoard == b)
                         .onDrop(of: [.clipperClip], isTargeted: Binding(get: { dropBoard == b }, set: { dropBoard = $0 ? b : (dropBoard == b ? nil : dropBoard) })) { providers in
                             pinDropped(providers, to: b)
                         }
@@ -308,7 +312,7 @@ struct ShelfView: View {
                             .onExitCommand { newBoard = ""; adding = false }
                     }
                     .padding(.horizontal, 12).padding(.vertical, 6)
-                    .overlay(Capsule().strokeBorder(Palette.accent, lineWidth: 2))
+                    .background(.quaternary, in: Capsule())
                     .onAppear {
                         model.finishNamingBoard = { create in if create { model.addBoard(newBoard) }; newBoard = ""; adding = false }
                         model.namingBoard = true; searchFocused = false; DispatchQueue.main.async { boardFieldFocused = true }
@@ -380,6 +384,8 @@ struct ShelfView: View {
             Button { model.onCommand?(.quit) } label: { Label("Quit Clipper", systemImage: "xmark.square") }.keyboardShortcut("q")
         } label: { Image(systemName: "ellipsis").frame(width: 28, height: 28) }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        // Monochrome like the other bar glyphs: accent on glass is kept for the selected state.
+        .tint(Palette.glassLabel)
         .accessibilityLabel("More").accessibilityIdentifier("shelf.more")
     }
 
@@ -391,7 +397,8 @@ struct ShelfView: View {
             .help(label).accessibilityLabel(label)
     }
 
-    func tab(_ title: String, _ b: String?, symbol: String? = nil, dot: Color? = nil) -> some View {
+    /// `targeted` while a card is dragged over it: an accent fill, since outlines don't go on glass.
+    func tab(_ title: String, _ b: String?, symbol: String? = nil, dot: Color? = nil, targeted: Bool = false) -> some View {
         let on = !model.picks && model.board == b
         return Button { model.picks = false; model.board = b; model.refresh() } label: {
             HStack(spacing: 6) {
@@ -400,7 +407,8 @@ struct ShelfView: View {
                 Text(title)
             }
             .padding(.horizontal, 12).padding(.vertical, 6)
-            .background(on ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: Capsule())
+            .foregroundStyle(targeted ? AnyShapeStyle(Palette.onAccent) : AnyShapeStyle(.primary))
+            .background(targeted ? AnyShapeStyle(Palette.accentFill) : on ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: Capsule())
             .contentShape(Capsule())
         }
         .buttonStyle(.plain).font(.callout.weight(on ? .semibold : .regular))
