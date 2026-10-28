@@ -46,6 +46,17 @@ final class SoundFeedback {
 
 /// A brief floating message ("Pasted 2 of 5", "Capture paused"). Never takes focus.
 @MainActor
+/// The notice's backdrop: Liquid Glass in a capsule, with a material before macOS 26.
+struct GlassCapsule: View {
+    var body: some View {
+        if #available(macOS 26, *) {
+            Color.clear.glassEffect(.regular, in: Capsule())
+        } else {
+            Capsule().fill(.regularMaterial)
+        }
+    }
+}
+
 final class OSD {
     private var panel: NSPanel?
     private var hideWork: DispatchWorkItem?
@@ -53,9 +64,11 @@ final class OSD {
     func show(_ text: String, symbol: String? = nil, hideFromSharing: Bool = true) {
         lastText = text
         let view = HStack(spacing: 8) {
-            if let symbol { Image(systemName: symbol) }
-            Text(text).font(.callout.weight(.medium))
-        }.padding(.horizontal, 16).padding(.vertical, 10).background { ShelfBackdrop() }
+            if let symbol { Image(systemName: symbol).font(.system(size: 15)) }
+            Text(text).font(.body.weight(.medium))
+        }
+        .foregroundStyle(Palette.glassLabel)
+        .padding(.horizontal, 16).padding(.vertical, 10).background { GlassCapsule() }
         let host = NSHostingView(rootView: view)
         let size = host.fittingSize
         if panel == nil {
@@ -91,7 +104,7 @@ struct OnboardingView: View {
             Group {
                 switch step {
                 case 0:
-                    Label("Welcome to Clipper", systemImage: "paperclip").font(.title2.weight(.semibold))
+                    Label { Text("Welcome to Clipper") } icon: { Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 32, height: 32) }.font(.title2.weight(.semibold))
                     Text("Clipper remembers what you copy so you can paste it again. Everything stays on this Mac.")
                 case 1:
                     Label("Let Clipper paste for you", systemImage: "hand.tap").font(.title2.weight(.semibold))
@@ -142,7 +155,7 @@ struct AboutView: View {
     let build: String
     var body: some View {
         VStack(spacing: 8) {
-            Image(systemName: "paperclip").font(.system(size: 44)).foregroundStyle(Palette.brandInk)
+            Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 72, height: 72)
             Text("Clipper").font(.title2.weight(.semibold))
             Text("Version \(version) (\(build))").font(.callout).foregroundStyle(.secondary)
             Text("A personal clipboard manager.").font(.callout)

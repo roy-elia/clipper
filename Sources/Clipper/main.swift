@@ -54,7 +54,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem?.button?.image = NSImage(systemSymbolName: "paperclip", accessibilityDescription: "Clipper")
+        statusItem?.button?.image = ClipperMark.menuBarImage()
         let menu = NSMenu()
         statusLine = menu.addItem(withTitle: "Capturing", action: nil, keyEquivalent: ""); statusLine?.isEnabled = false
         menu.addItem(.separator())
@@ -1055,6 +1055,11 @@ if let i = CommandLine.arguments.firstIndex(of: "--serve-mcp"), i + 2 < CommandL
     server.onState = { print("MCP \($0)"); fflush(stdout) }
     do { try server.start() } catch { print("MCP failed: \(error)"); exit(1) }
     RunLoop.main.run()
+}
+/// --make-icon <dir>: writes the app icon as an .iconset; scripts/package.sh turns it into Clipper.icns.
+if let i = CommandLine.arguments.firstIndex(of: "--make-icon"), i + 1 < CommandLine.arguments.count {
+    do { try ClipperMark.writeIconset(to: URL(fileURLWithPath: CommandLine.arguments[i + 1])); exit(0) }
+    catch { print("make-icon failed: \(error)"); exit(1) }
 }
 if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
     exit(MainActor.assumeIsolated { runSnapshots(into: CommandLine.arguments[i + 1]) })

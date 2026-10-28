@@ -195,7 +195,17 @@ struct ShelfView: View {
         .frame(maxWidth: .infinity, minHeight: Self.height, maxHeight: Self.height)
         .background { ShelfBackdrop() }
         .clipperStyle()
-        .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Palette.accent.opacity(0.14)).allowsHitTesting(false) } }
+        .overlay {
+            if dropTargeted {
+                RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Palette.accent.opacity(0.14))
+                    .overlay {
+                        Label("Drop to add to \(model.board ?? "Clipboard")", systemImage: "tray.and.arrow.down")
+                            .font(.body.weight(.medium)).foregroundStyle(Palette.onAccent)
+                            .padding(.horizontal, 16).frame(height: 34).background(Palette.accentFill, in: Capsule())
+                    }
+                    .allowsHitTesting(false)
+            }
+        }
         .onDrop(of: [.fileURL, .image, .plainText], isTargeted: $dropTargeted) { model.onDrop?($0) ?? false }
         .onKeyPress(phases: .down) { press in handleKey(press) }
         .onAppear { searchFocused = true }
@@ -255,13 +265,21 @@ struct ShelfView: View {
             }
             HStack(spacing: 6) {
                 searchField
-                iconButton("line.3.horizontal.decrease", label: "Filter", selected: model.kind != nil || model.app != nil || model.dateRange != nil) { filtering.toggle() }
+                iconButton("line.3.horizontal.decrease", label: "Filter", selected: filterCount > 0) { filtering.toggle() }
+                    .overlay(alignment: .topTrailing) {
+                        if filterCount > 0 {
+                            Text("\(filterCount)").font(.system(size: 9, weight: .bold)).foregroundStyle(Palette.onAccent)
+                                .frame(minWidth: 14, minHeight: 14).background(Palette.accentFill, in: Capsule())
+                                .overlay(Capsule().strokeBorder(Palette.keyline, lineWidth: 1)).offset(x: 3, y: -3)
+                                .allowsHitTesting(false).accessibilityHidden(true)
+                        }
+                    }
                     .accessibilityIdentifier("shelf.filter")
                     .popover(isPresented: $filtering, arrowEdge: .top) { FilterPopover(model: model) }
                 tab("Clipboard", nil, symbol: "clock.arrow.circlepath")
                 ForEach(model.boards, id: \.self) { b in
                     tab(b, b, dot: model.boardColor(b))
-                        .overlay { if dropBoard == b { Capsule().fill(Palette.accent.opacity(0.22)).allowsHitTesting(false) } }
+                        .overlay { if dropBoard == b { Capsule().strokeBorder(Palette.accentFill, lineWidth: 3).padding(-3).allowsHitTesting(false) } }
                         .onDrop(of: [.clipperClip], isTargeted: Binding(get: { dropBoard == b }, set: { dropBoard = $0 ? b : (dropBoard == b ? nil : dropBoard) })) { providers in
                             pinDropped(providers, to: b)
                         }
@@ -301,11 +319,14 @@ struct ShelfView: View {
                 }
             }
         }
-        .padding(.horizontal, 18).frame(height: 36)
+        .padding(.horizontal, 16).frame(height: 44)
     }
 
     /// A magnifier that widens into a field on hover or click, and stays open while it holds text. The field keeps
     /// keyboard focus while collapsed, so typing on an open shelf still searches (and opens it).
+    /// How many filters (type, app, date) are hiding clips.
+    var filterCount: Int { [model.kind != nil, model.app != nil, model.dateRange != nil].filter { $0 }.count }
+
     var searchField: some View {
         let open = searchHover || searchPinned || !model.query.isEmpty
         return HStack(spacing: 5) {
@@ -667,6 +688,13 @@ struct Card: View {
     var title: String { item.customTitle ?? (item.isSecret ? "Secret" : item.kind.rawValue.capitalized) }
     var fullBleed: Bool { !item.isSecret && (item.kind == .image || item.kind == .color) }
 
+    /// The centred detail line; colour cards show their sRGB values because the hex is already on the swatch.
+    var detail: String {
+        guard !item.isSecret, item.kind == .color, let t = item.text, let c = Color(hex: t),
+              let ns = NSColor(c).usingColorSpace(.sRGB) else { return item.detail }
+        return "sRGB \(Int((ns.redComponent * 255).rounded())) · \(Int((ns.greenComponent * 255).rounded())) · \(Int((ns.blueComponent * 255).rounded()))"
+    }
+
     @ViewBuilder var footer: some View {
         HStack {
             Spacer(minLength: 0)
@@ -676,7 +704,7 @@ struct Card: View {
                     .padding(.horizontal, 6).padding(.vertical, 2).background(Palette.ink, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             } else {
                 // Over images and colours: black 55% pill, so white text stays above 4.5:1 even on a white image.
-                Text(item.detail).font(.subheadline).foregroundStyle(fullBleed ? Color.white : Color.secondary).lineLimit(1)
+                Text(detail).font(.subheadline).foregroundStyle(fullBleed ? Color.white : Color.secondary).lineLimit(1)
                     .padding(.horizontal, fullBleed ? 8 : 0).padding(.vertical, fullBleed ? 2 : 0)
                     .background { if fullBleed { Capsule().fill(.black.opacity(increased ? 0.7 : 0.55)) } }
             }
