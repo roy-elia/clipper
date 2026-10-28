@@ -3,36 +3,97 @@ import AVFoundation
 import SwiftUI
 import DropCore
 
-/// Short sounds synthesized here ("Glass": one bright bell each), so no audio file is bundled or copied from anywhere.
+/// Short sounds synthesized here, so no audio file is bundled or copied from anywhere. Copy is a soft paper "snip"
+/// (two quick ticks of filtered noise and a faint rustle); paste is a short wooden "tock". Both stay quiet and
+/// under a fifth of a second, so they confirm an action without calling attention to it.
 @MainActor
 final class SoundFeedback {
     enum Cue { case copy, paste }
     private var players: [Cue: AVAudioPlayer] = [:]
     var enabled = false
 
-    /// A single bell: the fundamental plus its 2nd and 3rd harmonics, with a fast attack and a slow exponential fade.
-    static func wav(freq: Double, seconds: Double = 0.35, rate: Double = 44_100) -> Data {
-        var samples: [Int16] = []
-        let n = Int(seconds * rate)
+    nonisolated static let rate = 44_100.0
+
+    /// Copy: two ticks 18 ms apart (the second brighter), then an airy rustle that fades out by about 190 ms.
+    static func copySamples() -> [Double] {
+        let n = Int(0.19 * rate)
+        var out = [Double](repeating: 0, count: n)
+        var noise = Noise(seed: 0xC11)
+        let tick1 = Bandpass(centre: 3_100, q: 1.6), tick2 = Bandpass(centre: 7_400, q: 1.4), air = Bandpass(centre: 9_800, q: 0.8)
         for i in 0..<n {
-            let t = Double(i) / rate, env = min(1, Double(i) / 30) * exp(-6 * Double(i) / Double(n))
-            let tone = sin(2 * .pi * freq * t) + 0.4 * sin(4 * .pi * freq * t) + 0.15 * sin(6 * .pi * freq * t)
-            samples.append(Int16(max(-1, min(1, tone / 1.55 * env * 0.8)) * Double(Int16.max)))
+            let t = Double(i) / rate, w = noise.next()
+            var v = 0.0
+            if t < 0.012 { v += tick1.run(w) * 0.55 * exp(-t / 0.0022) }
+            if t >= 0.018 { let u = t - 0.018; v += tick2.run(w) * 0.9 * exp(-u / 0.0028) }
+            // The rustle swells after the ticks and fades with a raised-cosine tail.
+            if t >= 0.06 { let u = (t - 0.06) / 0.13; v += air.run(w) * 0.09 * sin(.pi * min(1, u)) }
+            out[i] = v
         }
+        return normalised(out, peak: 0.16)
+    }
+
+    /// Paste: a damped sine near 1 kHz that drops slightly in pitch, with a 1 ms attack; gone in about 25 ms.
+    static func pasteSamples() -> [Double] {
+        let n = Int(0.08 * rate)
+        var out = [Double](repeating: 0, count: n), phase = 0.0
+        for i in 0..<n {
+            let t = Double(i) / rate
+            let f = 980 + 90 * exp(-t / 0.006)
+            phase += 2 * .pi * f / rate
+            let env = min(1, t / 0.001) * exp(-t / 0.0055)
+            out[i] = (sin(phase) + 0.18 * sin(2.01 * phase)) * env
+        }
+        return normalised(out, peak: 0.32)
+    }
+
+    static func samples(for cue: Cue) -> [Double] { cue == .copy ? copySamples() : pasteSamples() }
+
+    static func normalised(_ x: [Double], peak: Double) -> [Double] {
+        let m = x.map(abs).max() ?? 1
+        return m > 0 ? x.map { $0 / m * peak } : x
+    }
+
+    /// Mono 16-bit PCM WAV.
+    static func wav(for cue: Cue) -> Data { wav(samples(for: cue)) }
+    static func wav(_ samples: [Double]) -> Data {
         var d = Data()
         func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
         func u16(_ v: UInt16) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
         d.append(contentsOf: Array("RIFF".utf8)); u32(UInt32(36 + samples.count * 2)); d.append(contentsOf: Array("WAVEfmt ".utf8))
         u32(16); u16(1); u16(1); u32(UInt32(rate)); u32(UInt32(rate) * 2); u16(2); u16(16)
         d.append(contentsOf: Array("data".utf8)); u32(UInt32(samples.count * 2))
-        for s in samples { u16(UInt16(bitPattern: s)) }
+        for s in samples { u16(UInt16(bitPattern: Int16(max(-1, min(1, s)) * Double(Int16.max)))) }
         return d
+    }
+
+    /// Repeatable white noise, so the sound is identical every launch.
+    struct Noise {
+        var state: UInt64
+        init(seed: UInt64) { state = seed }
+        mutating func next() -> Double {
+            state = state &* 6364136223846793005 &+ 1442695040888963407
+            return Double(Int64(bitPattern: state)) / Double(Int64.max)
+        }
+    }
+
+    /// RBJ band-pass biquad (constant peak gain), used to colour the noise.
+    final class Bandpass {
+        let b0, b2, a1, a2: Double
+        var x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0
+        init(centre: Double, q: Double) {
+            let w = 2 * .pi * centre / SoundFeedback.rate, alpha = sin(w) / (2 * q), a0 = 1 + alpha
+            b0 = alpha / a0; b2 = -alpha / a0; a1 = -2 * cos(w) / a0; a2 = (1 - alpha) / a0
+        }
+        func run(_ x: Double) -> Double {
+            let y = b0 * x + b2 * x2 - a1 * y1 - a2 * y2
+            x2 = x1; x1 = x; y2 = y1; y1 = y
+            return y
+        }
     }
 
     private func player(_ cue: Cue) -> AVAudioPlayer? {
         if let p = players[cue] { return p }
-        // Copy rings at G6; paste a fourth lower (D6) so the two are told apart.
-        let data = Self.wav(freq: cue == .copy ? 1568 : 1175)
+        let data = Self.wav(for: cue)
         guard let p = try? AVAudioPlayer(data: data) else { return nil }
         p.volume = 1; p.prepareToPlay(); players[cue] = p
         return p

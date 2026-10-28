@@ -1021,7 +1021,7 @@ final class ShelfPanel: NSPanel {
         }
     }
     // sounds: the synthesized WAV is valid and plays when enabled
-    let wav = SoundFeedback.wav(freq: 1568)
+    let wav = SoundFeedback.wav(for: .copy)
     check("sound is a well-formed WAV", wav.prefix(4) == Data("RIFF".utf8) && wav.count > 44 && (try? AVAudioPlayer(data: wav)) != nil)
     let snd = SoundFeedback(); check("sounds silent when disabled", !snd.play(.copy)); snd.enabled = true
     check("sounds play when enabled", snd.play(.paste))
@@ -1060,6 +1060,15 @@ if let i = CommandLine.arguments.firstIndex(of: "--serve-mcp"), i + 2 < CommandL
 if let i = CommandLine.arguments.firstIndex(of: "--make-icon"), i + 1 < CommandLine.arguments.count {
     do { try ClipperMark.writeIconset(to: URL(fileURLWithPath: CommandLine.arguments[i + 1])); exit(0) }
     catch { print("make-icon failed: \(error)"); exit(1) }
+}
+// --export-sounds <dir>: writes copy.wav and paste.wav, for listening to and measuring the cues.
+if let i = CommandLine.arguments.firstIndex(of: "--export-sounds"), i + 1 < CommandLine.arguments.count {
+    let dir = URL(fileURLWithPath: CommandLine.arguments[i + 1])
+    MainActor.assumeIsolated {
+        try? SoundFeedback.wav(for: .copy).write(to: dir.appendingPathComponent("copy.wav"))
+        try? SoundFeedback.wav(for: .paste).write(to: dir.appendingPathComponent("paste.wav"))
+    }
+    print("SOUNDS ->", dir.path); exit(0)
 }
 if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
     exit(MainActor.assumeIsolated { runSnapshots(into: CommandLine.arguments[i + 1]) })
