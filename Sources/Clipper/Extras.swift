@@ -10,13 +10,15 @@ final class SoundFeedback {
     private var players: [Cue: AVAudioPlayer] = [:]
     var enabled = false
 
-    static func wav(freqs: [Double], noteSeconds: Double = 0.07, rate: Double = 44_100) -> Data {
+    /// Each note is a sine with a quiet octave overtone (a soft bell), long enough to hear over other audio.
+    static func wav(freqs: [Double], noteSeconds: Double = 0.11, rate: Double = 44_100) -> Data {
         var samples: [Int16] = []
         for f in freqs {
             let n = Int(noteSeconds * rate)
             for i in 0..<n {
-                let t = Double(i) / rate, env = min(1, Double(i) / 200) * pow(1 - Double(i) / Double(n), 1.6)
-                samples.append(Int16(max(-1, min(1, sin(2 * .pi * f * t) * env * 0.35)) * Double(Int16.max)))
+                let t = Double(i) / rate, env = min(1, Double(i) / 200) * pow(1 - Double(i) / Double(n), 1.2)
+                let tone = sin(2 * .pi * f * t) * 0.8 + sin(4 * .pi * f * t) * 0.2
+                samples.append(Int16(max(-1, min(1, tone * env * 0.7)) * Double(Int16.max)))
             }
         }
         var d = Data()
@@ -33,14 +35,18 @@ final class SoundFeedback {
         if let p = players[cue] { return p }
         let data = Self.wav(freqs: cue == .copy ? [660, 880] : [880, 660])
         guard let p = try? AVAudioPlayer(data: data) else { return nil }
-        p.volume = 0.5; p.prepareToPlay(); players[cue] = p
+        p.volume = 1; p.prepareToPlay(); players[cue] = p
         return p
     }
 
     @discardableResult
     func play(_ cue: Cue) -> Bool {
-        guard enabled, let p = player(cue) else { return false }
-        p.currentTime = 0; return p.play()
+        guard enabled else { return false }
+        guard let p = player(cue) else { PasteInjector.diag("sound: \(cue) no player"); return false }
+        p.currentTime = 0
+        let ok = p.play()
+        PasteInjector.diag("sound: \(cue) played=\(ok)")
+        return ok
     }
 }
 
