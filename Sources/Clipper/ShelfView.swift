@@ -76,8 +76,9 @@ final class ShelfModel: ObservableObject {
     }
     var lastDeletedBatch: [ClipItem] = []
     /// Removes every unpinned screenshot; ⌘Z puts them back, like any delete. Returns how many went.
-    @discardableResult func clearScreenshots() -> Int {
-        let gone = store.deleteScreenshots()
+    @discardableResult func clearScreenshots() -> Int { removeBatch(store.deleteScreenshots()) }
+    /// Finishes a bulk delete the store already did: the stack, marks and undo follow it. Returns how many went.
+    @discardableResult func removeBatch(_ gone: [ClipItem]) -> Int {
         guard !gone.isEmpty else { return 0 }
         let ids = Set(gone.map(\.id))
         for i in gone { stack.remove(i.id) }
@@ -144,7 +145,7 @@ final class ShelfModel: ObservableObject {
 }
 
 /// Commands from the shelf's ⋯ menu, handled by the app.
-enum ShelfCommand { case about, newClip, settings, gettingStarted, shortcuts, pause(TimeInterval?), resume, clear, clearScreenshots, quit, importFromDevice, startDiagnostics, stopDiagnostics }
+enum ShelfCommand { case about, newClip, settings, gettingStarted, shortcuts, pause(TimeInterval?), resume, clear, clearScreenshots, clearImages, quit, importFromDevice, startDiagnostics, stopDiagnostics }
 
 struct ShelfView: View {
     @ObservedObject var model: ShelfModel
@@ -390,6 +391,8 @@ struct ShelfView: View {
             }
             Button { model.onCommand?(.clearScreenshots) } label: { Label("Clear Screenshots", systemImage: "camera.viewfinder") }
                 .keyboardShortcut(.delete, modifiers: [.command, .option])
+            Button { model.onCommand?(.clearImages) } label: { Label("Clear Images", systemImage: "photo.on.rectangle") }
+                .keyboardShortcut("i", modifiers: [.command, .option])
             Button { model.onCommand?(.clear) } label: { Label("Clear History…", systemImage: "trash") }
             Divider()
             Button { model.onCommand?(.quit) } label: { Label("Quit Clipper", systemImage: "xmark.square") }.keyboardShortcut("q")
@@ -505,7 +508,7 @@ struct ShelfView: View {
         if !item.isSecret, item.text != nil, item.kind != .file { Button("Copy as Plain Text") { model.onCopyPlain?(item) } }
         if !item.isSecret, item.kind == .file || item.kind == .link {
             Divider()
-            Button(item.kind == .link ? "Open Link" : "Open") { model.onOpen?(item, nil) }
+            Button(item.kind == .link ? "Open Link" : "Open") { model.onOpen?(item, nil) }.keyboardShortcut("o")
             if let target = ShelfView.target(of: item) {
                 let apps = NSWorkspace.shared.urlsForApplications(toOpen: target).prefix(12)
                 if !apps.isEmpty {
@@ -516,7 +519,7 @@ struct ShelfView: View {
                     }
                 }
             }
-            if item.kind == .file { Button("Reveal in Finder") { model.onReveal?(item) } }
+            if item.kind == .file { Button("Reveal in Finder") { model.onReveal?(item) }.keyboardShortcut("r", modifiers: [.command, .shift]) }
         }
         Divider()
         if item.fileURLs == nil && !item.isSecret {
@@ -535,7 +538,7 @@ struct ShelfView: View {
             }
             if item.pinboard != nil { Divider(); Button("Unpin") { model.pin(item, to: nil) } }
         }
-        Button("Add to Paste Stack") { model.stack.push(item) }
+        Button("Add to Paste Stack") { model.stack.push(item) }.keyboardShortcut("k")
         if item.isSecret { Button("Not a Secret") { model.store.markSecret(item.id, false); model.refresh() } }
         else if item.kind == .text { Button("Mark as Secret") { model.store.markSecret(item.id); model.refresh() } }
         Divider()

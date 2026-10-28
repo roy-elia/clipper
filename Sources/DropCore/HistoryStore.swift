@@ -166,11 +166,21 @@ public final class HistoryStore: @unchecked Sendable {
         }
     }
 
+    /// The clip copied most recently, and the one before it.
+    public var newest: ClipItem? { lock.withLock { items.first } }
+    public var previous: ClipItem? { lock.withLock { items.count > 1 ? items[1] : nil } }
+
     /// Deletes unpinned screenshots (see `ClipItem.isScreenshot`) and returns them, so the caller can offer undo.
     @discardableResult
-    public func deleteScreenshots() -> [ClipItem] {
+    public func deleteScreenshots() -> [ClipItem] { deleteUnpinned { $0.isScreenshot } }
+
+    /// Deletes every unpinned image clip and returns them, so the caller can offer undo.
+    @discardableResult
+    public func deleteImages() -> [ClipItem] { deleteUnpinned { $0.kind == .image } }
+
+    private func deleteUnpinned(where match: (ClipItem) -> Bool) -> [ClipItem] {
         lock.withLock {
-            let doomed = items.filter { $0.isScreenshot && $0.pinboard == nil }
+            let doomed = items.filter { match($0) && $0.pinboard == nil }
             guard !doomed.isEmpty else { return [] }
             let now = Date(), ids = Set(doomed.map(\.id))
             for i in doomed { tombstones[i.id] = now }

@@ -133,6 +133,7 @@ final class OSD {
             if let symbol { Image(systemName: symbol).font(.system(size: 15)) }
             Text(text).font(.body.weight(.medium))
         }
+        .fixedSize()   // the panel is sized from fittingSize, which otherwise lets the label truncate
         .foregroundStyle(Palette.glassLabel)
         .padding(.horizontal, 16).padding(.vertical, 10).background { GlassCapsule() }
         let host = NSHostingView(rootView: view)
@@ -236,7 +237,11 @@ struct ShortcutsView: View {
     var rows: [(String, String)] {
         let q = settings.quickModifier.symbol
         return [("Open the shelf", settings.hotkey.display), ("Paste from the Paste Stack", settings.stackHotkey.display),
-                ("Clear screenshots", "\(settings.screenshotsHotkey.display), or ⌥⌘⌫ in the shelf"),
+                ("Clear screenshots", "\(settings.screenshotsHotkey.display), or ⌥⌘⌫ in the shelf"), ("Clear images", "⌥⌘I"),
+                ("Delete the last copied clip", settings.deleteLastHotkey.display), ("Pause or resume capture", settings.pauseHotkey.display),
+                ("Paste latest as plain text", settings.plainPasteHotkey.display), ("Paste the clip before", settings.previousClipHotkey.display),
+                ("Show only text, links, images, files, colours", "⌥1…⌥5"), ("Pin to pinboard 1…9", "⌃1…⌃9"),
+                ("Back to Clipboard", "⌘0"), ("Add to Paste Stack", "⌘K"), ("Open link or file", "⌘O"), ("Reveal in Finder", "⇧⌘R"),
                 ("Paste the selected clip", "↩"), ("Paste as plain text", "⇧↩ or ⇧-click"), ("Paste clip 1…9", "\(q)1…\(q)9"),
                 ("Move between clips", "← →"), ("Next / previous pinboard", "⌘→ / ⌘←"), ("Preview", "Space"),
                 ("Copy without pasting", "⌘C"), ("Edit", "⌘E"), ("Rename", "⌘R"), ("Delete", "⌫ (⌘Z to undo)"), ("Close", "Esc")]

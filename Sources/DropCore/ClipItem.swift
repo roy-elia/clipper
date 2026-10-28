@@ -53,6 +53,14 @@ public extension ClipItem {
     var fileNames: [String] { (fileURLs ?? []).map { URL(string: $0)?.lastPathComponent ?? $0 } }
 }
 
+extension ClipKind {
+    /// ⌥1…5 in the shelf: the type filter's order.
+    public static func forFilterDigit(_ n: Int) -> ClipKind? {
+        let order: [ClipKind] = [.text, .link, .image, .file, .color]
+        return (1...order.count).contains(n) ? order[n - 1] : nil
+    }
+}
+
 extension ClipItem {
     /// Apps whose copied images are screenshots. Matched by prefix, so versioned IDs such as Snagit's count too.
     public static let screenshotApps = ["com.apple.screencaptureui", "com.apple.screenshot", "cc.ffitch.shottr",

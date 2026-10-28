@@ -56,6 +56,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var stackHotkey: Hotkey = Hotkey(keyCode: 8, modifiers: Hotkey.cmd | Hotkey.shift)
     /// Clears screenshots from anywhere: ⌃⌥⌘⌫ (Delete is key code 51).
     public var screenshotsHotkey: Hotkey = Hotkey(keyCode: 51, modifiers: Hotkey.control | Hotkey.option | Hotkey.cmd)
+    /// More shortcuts that work from anywhere, all on ⌃⌥⌘ so they stay clear of app shortcuts.
+    public var deleteLastHotkey: Hotkey = Hotkey(keyCode: 6, modifiers: Hotkey.control | Hotkey.option | Hotkey.cmd)    // Z
+    public var pauseHotkey: Hotkey = Hotkey(keyCode: 35, modifiers: Hotkey.control | Hotkey.option | Hotkey.cmd)        // P
+    public var plainPasteHotkey: Hotkey = Hotkey(keyCode: 9, modifiers: Hotkey.control | Hotkey.option | Hotkey.cmd)    // V
+    public var previousClipHotkey: Hotkey = Hotkey(keyCode: 11, modifiers: Hotkey.control | Hotkey.option | Hotkey.cmd) // B
     public var onboarded: Bool = false
     public var lastSeenVersion: String?
     public var iCloudSync: Bool = false
@@ -76,7 +81,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     /// Shelf ⇧⌘V and Paste Stack ⇧⌘C.
     public mutating func resetShortcuts() {
-        let d = AppSettings(); hotkey = d.hotkey; stackHotkey = d.stackHotkey; screenshotsHotkey = d.screenshotsHotkey; quickModifier = d.quickModifier
+        let d = AppSettings(); hotkey = d.hotkey; stackHotkey = d.stackHotkey; screenshotsHotkey = d.screenshotsHotkey
+        deleteLastHotkey = d.deleteLastHotkey; pauseHotkey = d.pauseHotkey; plainPasteHotkey = d.plainPasteHotkey
+        previousClipHotkey = d.previousClipHotkey; quickModifier = d.quickModifier
     }
 
     // Older settings files lack newer keys; fall back to defaults instead of discarding everything.
@@ -97,6 +104,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         hideFromSharing = try c.decodeIfPresent(Bool.self, forKey: .hideFromSharing) ?? def.hideFromSharing
         stackHotkey = try c.decodeIfPresent(Hotkey.self, forKey: .stackHotkey) ?? def.stackHotkey
         screenshotsHotkey = try c.decodeIfPresent(Hotkey.self, forKey: .screenshotsHotkey) ?? def.screenshotsHotkey
+        deleteLastHotkey = try c.decodeIfPresent(Hotkey.self, forKey: .deleteLastHotkey) ?? def.deleteLastHotkey
+        pauseHotkey = try c.decodeIfPresent(Hotkey.self, forKey: .pauseHotkey) ?? def.pauseHotkey
+        plainPasteHotkey = try c.decodeIfPresent(Hotkey.self, forKey: .plainPasteHotkey) ?? def.plainPasteHotkey
+        previousClipHotkey = try c.decodeIfPresent(Hotkey.self, forKey: .previousClipHotkey) ?? def.previousClipHotkey
         onboarded = try c.decodeIfPresent(Bool.self, forKey: .onboarded) ?? def.onboarded
         lastSeenVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenVersion)
         iCloudSync = try c.decodeIfPresent(Bool.self, forKey: .iCloudSync) ?? def.iCloudSync

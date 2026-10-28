@@ -31,7 +31,14 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var wheelMonitor: Any?
     let hotkeys = HotkeyCenter()
     let stackHotkeys = HotkeyCenter(id: 2)
-    let screenshotHotkeys = HotkeyCenter(id: 3)
+    /// Shortcuts that work from anywhere besides the shelf and Paste Stack ones: (registration, setting, log name, action).
+    lazy var globalShortcuts: [(center: HotkeyCenter, key: KeyPath<AppSettings, Hotkey>, name: String, fire: () -> Void)] = [
+        (HotkeyCenter(id: 3), \.screenshotsHotkey, "clear-screenshots", { [weak self] in self?.clearScreenshots() }),
+        (HotkeyCenter(id: 4), \.deleteLastHotkey, "delete-last", { [weak self] in self?.deleteLastClip() }),
+        (HotkeyCenter(id: 5), \.pauseHotkey, "pause", { [weak self] in self?.togglePauseCapture() }),
+        (HotkeyCenter(id: 6), \.plainPasteHotkey, "paste-plain", { [weak self] in self?.pasteLatest(plain: true) }),
+        (HotkeyCenter(id: 7), \.previousClipHotkey, "paste-previous", { [weak self] in self?.pastePrevious() }),
+    ]
     let sounds = SoundFeedback()
     let osd = OSD()
     var collecting = false
@@ -64,6 +71,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(withTitle: "Paste Stack…", action: #selector(showStack), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
         menu.addItem(withTitle: "Clear Screenshots", action: #selector(clearScreenshots), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Clear Images", action: #selector(clearImages), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Clear History…", action: #selector(confirmClear), keyEquivalent: "").target = self
         collectItem = menu.addItem(withTitle: "Collect Copies to Stack", action: #selector(toggleCollect(_:)), keyEquivalent: "")
         collectItem?.target = self
@@ -108,7 +116,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             monitor.rules = makeRules()
             sounds.enabled = model.settings.playSounds
             if stackHotkeys.registered != model.settings.stackHotkey { stackHotkeys.register(model.settings.stackHotkey) }
-            if screenshotHotkeys.registered != model.settings.screenshotsHotkey { screenshotHotkeys.register(model.settings.screenshotsHotkey) }
+            for g in globalShortcuts where g.center.registered != model.settings[keyPath: g.key] { g.center.register(model.settings[keyPath: g.key]) }
             applyPrivacy()
             applySpotlight()
             if model.settings.iCloudSync { syncNow() }
@@ -142,8 +150,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         sounds.enabled = model.settings.playSounds
         stackHotkeys.onFire = { [weak self] in self?.pasteNext() }
         stackHotkeys.register(model.settings.stackHotkey)
-        screenshotHotkeys.onFire = { [weak self] in self?.clearScreenshots() }
-        PasteInjector.diag("hotkey clear-screenshots \(model.settings.screenshotsHotkey.display) registered=\(screenshotHotkeys.register(model.settings.screenshotsHotkey))")
+        for g in globalShortcuts {
+            g.center.onFire = g.fire
+            let hk = model.settings[keyPath: g.key]
+            PasteInjector.diag("hotkey \(g.name) \(hk.display) registered=\(g.center.register(hk))")
+        }
         model.onShare = { [weak self] item in self?.share(item) }
         model.onCopy = { [weak self] item in self?.copyOnly(item) }
         model.onEdit = { [weak self] item in self?.openEditor(item) }
@@ -431,6 +442,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .resume: resume()
         case .clear: confirmClear()
         case .clearScreenshots: clearScreenshots()
+        case .clearImages: clearImages()
         case .quit: NSApp.terminate(nil)
         case .importFromDevice: hideShelfForOwnWindow(); showImport()
         case .startDiagnostics:
@@ -477,6 +489,18 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         shortcutsWindow?.center(); bringClipperForward(); shortcutsWindow?.makeKeyAndOrderFront(nil)
     }
 
+    /// Settings ▸ General rows for the extra global shortcuts, in the order they're listed.
+    static let globalShortcutRows: [(String, WritableKeyPath<AppSettings, Hotkey>)] = [
+        ("Clear screenshots", \.screenshotsHotkey), ("Delete the last copied clip", \.deleteLastHotkey),
+        ("Pause or resume capture", \.pauseHotkey), ("Paste latest as plain text", \.plainPasteHotkey),
+        ("Paste the clip before", \.previousClipHotkey),
+    ]
+
+    /// The number keys 1…9 by key code (top row), so ⌥ and ⌃ combinations read the same on every layout.
+    static func digit(_ code: UInt16) -> Int? {
+        [18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9][code]
+    }
+
     func installPanelShortcuts() {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             guard let self, let panel, panel.isVisible, e.window === panel else { return e }
@@ -503,6 +527,22 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 model.undoDelete(); osd.show("Restored", symbol: "arrow.uturn.backward", hideFromSharing: model.settings.hideFromSharing); return nil
             }
             if mods == [.command, .option], e.keyCode == 51 || e.keyCode == 117 { clearScreenshots(); return nil }
+            if mods == [.command, .option], e.keyCode == 34 { clearImages(); return nil }                       // ⌥⌘I
+            // ⌥1…5 filters by type (pressing it again clears the filter); ⌃1…9 pins the selection to pinboard 1…9.
+            // Either gives way to quick paste when that uses the same modifier, since quick paste was checked above.
+            if let n = App.digit(e.keyCode) {
+                if mods == .option, let k = ClipKind.forFilterDigit(n) { model.kind = model.kind == k ? nil : k; model.refresh(); return nil }
+                if mods == .control, !model.targets.isEmpty {
+                    guard model.boards.indices.contains(n - 1) else {
+                        osd.show("No pinboard \(n)", symbol: "pin.slash", hideFromSharing: model.settings.hideFromSharing); return nil
+                    }
+                    let b = model.boards[n - 1]
+                    for i in model.targets { model.store.setPinboard(b, for: i.id) }
+                    model.refresh()
+                    osd.show("Pinned to \(b)", symbol: "pin.fill", hideFromSharing: model.settings.hideFromSharing); return nil
+                }
+            }
+            if mods == [.command, .shift], e.keyCode == 15, let i = model.selected, i.kind == .file { model.onReveal?(i); return nil }  // ⇧⌘R
             if mods == .command, e.keyCode == 123 { model.cycleBoard(-1); return nil }
             if mods == .command, e.keyCode == 124 { model.cycleBoard(1); return nil }
             guard mods == .command else { return e }
@@ -516,6 +556,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if c == "r", let i = model.selected { renameClip(i); return nil }
                 if c == "y", let i = model.selected { model.onPreview?(i); return nil }
                 if c == "]" { model.cycleBoard(1); return nil }
+                if c == "0" { model.picks = false; model.board = nil; model.selection = 0; model.refresh(); return nil }
+                if c == "k", let i = model.selected {
+                    model.stack.push(i)
+                    osd.show("Added to Paste Stack", symbol: "square.stack.3d.up", hideFromSharing: model.settings.hideFromSharing); return nil
+                }
+                if c == "o", let i = model.selected, ShelfView.target(of: i) != nil { model.onOpen?(i, nil); return nil }
                 if c == "[" { model.cycleBoard(-1); return nil }
             }
             return e
@@ -766,6 +812,39 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let n = model.clearScreenshots()
         osd.show(n == 0 ? "No screenshots to clear" : "Cleared \(n) screenshot\(n == 1 ? "" : "s"). ⌘Z in Clipper to undo",
                  symbol: n == 0 ? "camera.viewfinder" : "trash", hideFromSharing: model.settings.hideFromSharing)
+    }
+
+    /// ⌥⌘I in the shelf: every unpinned image goes; ⌘Z brings them back.
+    @objc func clearImages() {
+        let n = model.removeBatch(store.deleteImages())
+        osd.show(n == 0 ? "No images to clear" : "Cleared \(n) image\(n == 1 ? "" : "s"). ⌘Z in Clipper to undo",
+                 symbol: n == 0 ? "photo" : "trash", hideFromSharing: model.settings.hideFromSharing)
+    }
+
+    /// ⌃⌥⌘Z: deletes the clip copied last, for a password or token copied by mistake. If that clip is still on the
+    /// clipboard, the clipboard is emptied too, so it can't be pasted by accident. ⌘Z in the shelf restores the clip.
+    func deleteLastClip() {
+        guard let item = store.newest else {
+            osd.show("Nothing to delete", symbol: "tray", hideFromSharing: model.settings.hideFromSharing); return
+        }
+        let pb = NSPasteboard.general
+        if let t = item.text, pb.string(forType: .string) == t { pb.clearContents() }
+        model.delete(item)
+    }
+
+    /// ⌃⌥⌘P: pauses capture until resumed, or resumes it.
+    func togglePauseCapture() { if monitor.paused { resume() } else { setPause(nil) } }
+
+    /// ⌃⌥⌘V pastes the latest clip as plain text; ⌃⌥⌘B pastes the one before it. Both go to the app in front.
+    func pasteLatest(plain: Bool) {
+        guard let item = store.newest else { return }
+        pick(item, plain: plain)
+    }
+    func pastePrevious() {
+        guard let item = store.previous else {
+            osd.show("No earlier clip", symbol: "tray", hideFromSharing: model.settings.hideFromSharing); return
+        }
+        pick(item)
     }
 
     /// Always asks first: deleting history cannot be undone.
