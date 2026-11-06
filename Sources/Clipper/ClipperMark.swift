@@ -77,7 +77,6 @@ enum ClipperMark {
     /// in the brand blues on a white ground, one per copy in the history. Each clip is a solid object (its outline filled
     /// with a vertical gradient, a bright rim and a soft shadow) because the flat .icns gets no Liquid Glass of its own.
     /// At 32 and 16 px it drops to two shorter clips, the front one upright with its legs on whole pixels.
-    /// Resources/IconLayers holds the same layers as full-bleed SVGs for Icon Composer.
     static func appIcon(pixels: Int) -> NSBitmapImageRep {
         let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels, bitsPerSample: 8, samplesPerPixel: 4,
                                    hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
