@@ -1,3 +1,16 @@
 .build/
 dist/
 *.xcodeproj
+
+# --- ai-standard (section 13.2) ---
+input/
+output/
+temp/
+.env
+.env.*
+!.env.example
+CLAUDE.local.md
+.claude/settings.local.json
+.DS_Store
+.vscode/
+.idea/
