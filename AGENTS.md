@@ -26,7 +26,7 @@ Clipper is clipboard history for macOS: a menu-bar app with pinboards, Paste Sta
 | Request type | Read first | Load if needed |
 |---|---|---|
 | Clipboard logic, storage, rules (no UI) | `Sources/DropCore/` (the testable core) | `Tests/DropCoreTests/` |
-| Menu-bar app, shelf UI | `Sources/Clipper/` | `Sources/Clipper/DesignTokens.swift` |
+| Menu-bar app, shelf UI | `Sources/Clipper/` | `Sources/Clipper/DesignTokens.swift`, `docs/decisions/2026-10-28-no-strokes-on-glass.md` (glass styling rule) |
 | MCP server or stdio bridge | `README.md` (MCP section) | `Sources/DropCore/MCPHandler.swift`, `Sources/Clipper/MCPServer.swift`, `Sources/clipper-mcp-stdio/main.swift` |
 | AppleScript support | `Resources/Clipper.sdef` | `Sources/Clipper/Scripting.swift` |
 | Secrets in clips | `Sources/DropCore/SecretDetector.swift` | `Tests/DropCoreTests/SecretAndPickTests.swift` |

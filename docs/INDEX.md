@@ -12,8 +12,7 @@ Purpose: shared, durable context for clipper. Read this before placing or findin
 | File | Summary (one line) | Read when | Owner |
 |---|---|---|---|
 | `README.md` (repo root) | Build, test and run commands; MCP setup | Building or integrating | roy-elia |
-
-No other docs exist yet.
+| `docs/decisions/2026-10-28-no-strokes-on-glass.md` | How the "no strokes on glass" design rule is read | Auditing or changing shelf glass styling | roy-elia |
 
 ## Where does X go
 | I am producing | Put it in | Owning skill | Tracked |
@@ -24,7 +23,7 @@ No other docs exist yet.
 | Unit tests | `Tests/DropCoreTests/` | manual | Yes |
 | AppleScript dictionary and other resources | `Resources/` | manual | Yes |
 | Build and packaging scripts | `scripts/` | manual | Yes |
-| A decision and its reasoning | `docs/decisions/YYYY-MM-DD-<topic>.md` (created on first use) | manual | Yes |
+| A decision and its reasoning (first one is there) | `docs/decisions/YYYY-MM-DD-<topic>.md` | manual | Yes |
 | Session handoff | `state/clipper/HANDOFF.md` (created on first use) | session-handoff | Yes |
 | Exploratory draft | `output/` (created on first use) | any | No |
 | Scratch or pulled copy of an external page | `temp/` (created on first use) | any | No |
